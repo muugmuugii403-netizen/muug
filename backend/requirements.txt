@@ -1,0 +1,20 @@
+# ---- Core (Step 1) ----
+fastapi>=0.115.6
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.5
+pydantic-settings>=2.7.1
+
+# ---- HTTP client (Step 2: market data) ----
+httpx>=0.28.1
+
+# ---- Storage (Step 2) ----
+SQLAlchemy[asyncio]>=2.0.37
+asyncpg>=0.30.0
+redis>=5.2.1
+
+# ---- Dev / test ----
+python-dotenv>=1.0.1
+pytest>=8.3.4
+pytest-asyncio>=0.25.2
+ruff>=0.9.3
+mypy>=1.14.1

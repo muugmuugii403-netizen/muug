@@ -872,3 +872,266 @@ export const SECURITY: string[] = [
 
 export const DISCLAIMER =
   "Энэ систем баталгаатай ашиг амлахгүй. Forex зах зээл өндөр эрсдэлтэй бөгөөд signal бүр зөвхөн техник дүн шинжилгээний мэдээлэл юм. Хүчтэй economic news (NFP, FOMC, CPI) гарах үед систем эрсдэлийн сануулга нэмж, confidence-ийг бууруулна — гэхдээ эцсийн шийдвэр хэрэглэгчийнх.";
+
+/* ================================================================
+   STEP 1 · PROJECT SCAFFOLD — хөгжүүлэлтийн тэмдэглэл
+   ================================================================ */
+
+export interface Step1NavItem {
+  id: string;
+  num: string;
+  label: string;
+}
+
+export const NAV1: Step1NavItem[] = [
+  { id: "s1-files", num: "01", label: "Файл бүтэц ба үүрэг" },
+  { id: "s1-run", num: "02", label: "Ажиллуулах заавар" },
+  { id: "s1-pkgs", num: "03", label: "Package-ууд" },
+  { id: "s1-contract", num: "04", label: "API contract" },
+  { id: "s1-next", num: "05", label: "Дараагийн алхам" },
+];
+
+export interface SNode {
+  n: string;
+  t: "d" | "f";
+  note?: string;
+  c?: SNode[];
+}
+
+export const SCAFFOLD_TREE: SNode = {
+  n: "forex-analyzer/",
+  t: "d",
+  c: [
+    { n: "Makefile", t: "f", note: "make setup · dev-api · dev-web · test · lint" },
+    { n: "README.md", t: "f", note: "бүрэн заавар: setup → ажиллуулах → тест" },
+    {
+      n: "frontend/",
+      t: "d",
+      note: "Next.js 15 · React 19 · TS strict",
+      c: [
+        { n: ".env.example", t: "f", note: "NEXT_PUBLIC_API_BASE_URL" },
+        { n: "next.config.ts", t: "f", note: "strictMode · X-Powered-By off" },
+        { n: "package.json", t: "f", note: "next · react · zod · lightweight-charts" },
+        { n: "postcss.config.mjs", t: "f", note: "Tailwind CSS v4" },
+        { n: "tsconfig.json", t: "f", note: "strict + noUncheckedIndexedAccess" },
+        {
+          n: "src/",
+          t: "d",
+          c: [
+            {
+              n: "app/",
+              t: "d",
+              c: [
+                { n: "globals.css", t: "f", note: "design tokens" },
+                { n: "layout.tsx", t: "f", note: "root layout · metadata" },
+                { n: "page.tsx", t: "f", note: "health статус + pair сонголт" },
+              ],
+            },
+            { n: "components/", t: "d", c: [{ n: "PairSelector.tsx", t: "f", note: "zod validation-тай сонгогч" }] },
+            {
+              n: "lib/",
+              t: "d",
+              c: [
+                { n: "api.ts", t: "f", note: "timeout · retry · ApiError" },
+                { n: "types.ts", t: "f", note: "API contract төрлүүд" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      n: "backend/",
+      t: "d",
+      note: "FastAPI · Pydantic v2 · type hints",
+      c: [
+        { n: ".env.example", t: "f", note: "нууцуудын загвар — .env commit хийгдэхгүй" },
+        { n: "requirements.txt", t: "f", note: "fastapi · uvicorn · pydantic-settings · pytest" },
+        {
+          n: "app/",
+          t: "d",
+          c: [
+            { n: "main.py", t: "f", note: "app factory · CORS · error handlers" },
+            { n: "core/", t: "d", c: [{ n: "config.py", t: "f", note: "env → typed тохиргоо · prod guard" }] },
+            { n: "api/", t: "d", c: [{ n: "routes.py", t: "f", note: "/health · /pairs · /analysis" }] },
+            { n: "schemas/", t: "d", c: [{ n: "analysis.py", t: "f", note: "Pydantic: request/response/error" }] },
+            { n: "services/", t: "d", c: [{ n: "analysis_service.py", t: "f", note: "engine-ийн байр — Step 2" }] },
+          ],
+        },
+        { n: "tests/", t: "d", c: [{ n: "test_health.py", t: "f", note: "5 smoke тест" }] },
+      ],
+    },
+  ],
+};
+
+export interface ManifestFile {
+  path: string;
+  area: "frontend" | "backend" | "root";
+  role: string;
+}
+
+export const MANIFEST: ManifestFile[] = [
+  { path: "README.md", area: "root", role: "Төслийн бүрэн заавар: setup, ажиллуулах, env, API, зам" },
+  { path: "Makefile", area: "root", role: "make setup / dev-api / dev-web / test / lint — нэгдсэн команд" },
+  { path: "frontend/package.json", area: "frontend", role: "Next.js 15 + React 19 хамаарал ба script-үүд" },
+  { path: "frontend/tsconfig.json", area: "frontend", role: "TypeScript strict, noUncheckedIndexedAccess, @/ alias" },
+  { path: "frontend/next.config.ts", area: "frontend", role: "reactStrictMode, poweredByHeader: false" },
+  { path: "frontend/postcss.config.mjs", area: "frontend", role: "Tailwind CSS v4 PostCSS plugin" },
+  { path: "frontend/.env.example", area: "frontend", role: "Client env загвар — зөвхөн API URL, нууц байхгүй" },
+  { path: "frontend/src/app/layout.tsx", area: "frontend", role: "Root layout, metadata, lang=mn" },
+  { path: "frontend/src/app/globals.css", area: "frontend", role: "Design token болон үндсэн загвар" },
+  { path: "frontend/src/app/page.tsx", area: "frontend", role: "Нүүр: холболтын статус, pair жагсаалт, шинжилгээ" },
+  { path: "frontend/src/lib/types.ts", area: "frontend", role: "API contract төрлүүд — backend schema-тай 1:1" },
+  { path: "frontend/src/lib/api.ts", area: "frontend", role: "fetch client: timeout, retry (exp backoff), ApiError" },
+  { path: "frontend/src/components/PairSelector.tsx", area: "frontend", role: "Pair/timeframe сонголт + zod validation" },
+  { path: "backend/requirements.txt", area: "backend", role: "Python хамаарал: FastAPI, pydantic-settings, pytest…" },
+  { path: "backend/.env.example", area: "backend", role: "Бүх secret-ийн загвар; .env нь git-д орохгүй" },
+  { path: "backend/app/main.py", area: "backend", role: "FastAPI app factory: CORS, lifespan, 3 error handler" },
+  { path: "backend/app/core/config.py", area: "backend", role: "pydantic-settings: env → typed, prod secret guard" },
+  { path: "backend/app/api/routes.py", area: "backend", role: "GET /health, GET /pairs, POST /analysis (501 stub)" },
+  { path: "backend/app/schemas/analysis.py", area: "backend", role: "Pydantic загвар: хүсэлт / хариу / алдааны формат" },
+  { path: "backend/app/services/analysis_service.py", area: "backend", role: "Deterministic engine-ийн байр — Step 2-т дүүргэнэ" },
+  { path: "backend/tests/test_health.py", area: "backend", role: "Smoke: health 200 · pairs 200 · 501 · 422 ×2" },
+];
+
+export interface RunTab {
+  id: string;
+  label: string;
+  code: string;
+}
+
+export const RUN_TABS: RunTab[] = [
+  {
+    id: "setup",
+    label: "1 · Setup",
+    code: `# repo-г аваад бүх орчинг нэг командаар бэлдэнэ
+git clone git@github.com:you/forex-analyzer.git
+cd forex-analyzer
+make setup
+# → backend venv + pip install + __init__.py + .env
+# → frontend npm install + .env.local`,
+  },
+  {
+    id: "api",
+    label: "2 · Backend",
+    code: `make dev-api
+# → http://localhost:8000/docs   (Swagger UI)
+# → http://localhost:8000/api/v1/health
+# Windows (makeгүй): cd backend && .venv\\Scripts\\uvicorn app.main:app --reload`,
+  },
+  {
+    id: "web",
+    label: "3 · Frontend",
+    code: `make dev-web
+# → http://localhost:3000
+# Хуудас нээгмэгц /health дуудаж холболтын статус
+# болон latency-г харуулна; pair-ууд /pairs-аас ирнэ.`,
+  },
+  {
+    id: "check",
+    label: "4 · Шалгах",
+    code: `make test        # pytest: 5 smoke тест
+make lint        # ruff + mypy (backend)
+make typecheck   # tsc --noEmit (frontend)
+
+curl -s localhost:8000/api/v1/health
+# {"status":"ok","version":"v1","env":"dev",...}`,
+  },
+];
+
+export type PkgRow = [name: string, ver: string, role: string];
+
+export const PKG_FRONT: PkgRow[] = [
+  ["next", "15.1", "App Router, RSC, SSR суурь"],
+  ["react · react-dom", "19.0", "UI"],
+  ["zod", "3.24", "Хүсэлтийн client талын validation"],
+  ["@tanstack/react-query", "5.64", "Step 2+: server state, cache, retry"],
+  ["lightweight-charts", "4.2", "Step 6: TradingView OHLC chart"],
+  ["tailwindcss · @tailwindcss/postcss", "4.0", "Utility-first CSS"],
+  ["typescript", "5.7", "strict mode"],
+  ["eslint · eslint-config-next", "9.x", "Lint дүрмүүд"],
+];
+
+export const PKG_BACK: PkgRow[] = [
+  ["fastapi", "0.115+", "ASGI framework · auto OpenAPI docs"],
+  ["uvicorn[standard]", "0.34+", "ASGI сервер (dev: --reload)"],
+  ["pydantic · pydantic-settings", "2.10+", "Validation + env тохиргоо (SecretStr)"],
+  ["httpx", "0.28+", "Step 2: market data client — timeout/retry"],
+  ["SQLAlchemy[asyncio] · asyncpg", "2.0+", "Step 2: PostgreSQL async ORM"],
+  ["redis", "5.2+", "Step 2: OHLCV cache"],
+  ["pytest · pytest-asyncio", "8.3+", "Тест (5 smoke тест бэлэн)"],
+  ["ruff · mypy", "—", "Lint + type hint шалгуур"],
+];
+
+export interface Step1Endpoint {
+  method: "GET" | "POST";
+  path: string;
+  status: string;
+  note: string;
+}
+
+export const STEP1_ENDPOINTS: Step1Endpoint[] = [
+  { method: "GET", path: "/api/v1/health", status: "200", note: "Liveness + version + env — frontend эхлээд үүнийг дуудна" },
+  { method: "GET", path: "/api/v1/pairs", status: "200", note: "Дэмжигдэх pair жагсаалт (Step 1: static · Step 2: DB-ээс)" },
+  { method: "POST", path: "/api/v1/analysis", status: "422 · 501", note: "Оролтыг бүрэн validate хийнэ; engine Step 2-т → одоо 501" },
+];
+
+export const STEP1_HEALTH_JSON = `// GET /api/v1/health → 200
+{
+  "status": "ok",
+  "version": "v1",
+  "env": "dev",
+  "utc_now": "2026-02-14T08:30:00.000Z"
+}`;
+
+export const STEP1_ERROR_501_JSON = `// POST /api/v1/analysis (зөв оролт) → 501
+{
+  "error": "not_implemented",
+  "detail": "Deterministic scoring engine нь Step 2-т хэрэгжинэ (symbol=EUR/USD, timeframe=1h)",
+  "path": "/api/v1/analysis",
+  "utc_now": "2026-02-14T08:31:12.000Z"
+}`;
+
+export const STEP1_ERROR_422_JSON = `// POST /api/v1/analysis {"symbol":"btcusd"} → 422
+{
+  "error": "validation_error",
+  "detail": "Буруу оролт: body.symbol",
+  "path": "/api/v1/analysis",
+  "utc_now": "2026-02-14T08:32:45.000Z"
+}`;
+
+export const CHECKLIST: [req: string, how: string][] = [
+  ["TypeScript strict mode", "tsconfig: strict + noUncheckedIndexedAccess + noImplicitOverride"],
+  ["Python type hints", "Функц/класс бүр hint-тэй, mypy-д бэлэн бүтэц"],
+  [".env.example үүссэн", "frontend + backend тус бүрд; .env нь git-д хэзээ ч орохгүй"],
+  ["Secret hardcode-гүй", "pydantic-settings → SecretStr; prod-д default secret-ийг блоклож validate"],
+  ["Frontend↔backend холболт", "lib/api.ts: timeout (AbortController) · retry exp backoff · нэгдсэн ApiError"],
+  ["Error handling", "422 / 500 / 501 нэгдсэн ErrorResponse формат · 3 exception handler"],
+  ["Input validation", "Pydantic (backend) + zod (frontend): symbol regex, timeframe enum"],
+  ["README.md", "setup → ажиллуулах → тест → troubleshooting бүгд бичигдсэн"],
+];
+
+export const SCOPE_OUT: string[] = [
+  "Forex market data API холбоогүй — Step 2 (TwelveDataClient: timeout/retry/fallback)",
+  "Qwen AI холбоогүй — Step 5 (зөвхөн тайлбар, шийдвэрт оролцохгүй)",
+  "BUY/SELL scoring алгоритм бичээгүй — Step 4; AnalysisService одоогоор зөвхөн бүтэц",
+];
+
+export interface NextStep {
+  step: string;
+  title: string;
+  desc: string;
+  eta: string;
+  status: "done" | "next" | "todo";
+}
+
+export const NEXT_STEPS: NextStep[] = [
+  { step: "01", title: "Project scaffold", desc: "Бүтэц, API холболт, validation, error handling, README.", eta: "дууссан", status: "done" },
+  { step: "02", title: "Market data adapter", desc: "TwelveDataClient: timeout, retry ×3, yfinance fallback, Redis OHLCV cache · GET /chart/{symbol}/{timeframe}.", eta: "4 өдөр", status: "next" },
+  { step: "03", title: "Indicator layer", desc: "pandas + pandas-ta: EMA 20/50/200, RSI, MACD, ATR, Support/Resistance, price action — цэвэр функц, unit тесттэй.", eta: "4 өдөр", status: "todo" },
+  { step: "04", title: "Deterministic scoring engine", desc: "7 дүрэм · нийт жин 100 · 3 босго (≥55, зөрүү ≥25, RR ≥1.5) → BUY/SELL/WAIT + Entry/SL/TP/RR + confidence.", eta: "4 өдөр", status: "todo" },
+  { step: "05", title: "Qwen тайлбар давхарга", desc: "AI зөвхөн scoring JSON-ийг тайлбарлана; fallback: template тайлбар. Signal-д хэзээ ч хүрэхгүй.", eta: "2 өдөр", status: "todo" },
+  { step: "06", title: "UI: chart + signal хуудас", desc: "Lightweight Charts OHLC + EMA/S-R давхарга, multi-timeframe самбар, тайлбарын карт.", eta: "6 өдөр", status: "todo" },
+  { step: "07", title: "Хатуужуулалт", desc: "Rate limit, load тест, Sentry, GitHub Actions CI, DB partition + backup.", eta: "5 өдөр", status: "todo" },
+  { step: "08", title: "Deploy", desc: "Docker compose → VPS; Nginx + TLS; env-based prod build; monitoring.", eta: "4 өдөр", status: "todo" },
+];
