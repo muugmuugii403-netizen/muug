@@ -99,6 +99,13 @@ class InsufficientDataError(AnalysisError):
     code = "INSUFFICIENT_DATA"
 
 
+class InvalidDateRangeError(AnalysisError):
+    """Backtest-ийн огнооны муж буруу (эсрэг, хэт урт, ирээдүй)."""
+
+    status = 422
+    code = "INVALID_DATE_RANGE"
+
+
 # ============================================================
 # AI (Qwen) алдаанууд — Step 4
 # ============================================================

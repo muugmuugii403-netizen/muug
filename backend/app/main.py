@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.backtest import router as backtest_router
 from app.api.forex import router as forex_router
 from app.api.routes import router
 from app.core.config import get_settings
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router, prefix=f"/api/{settings.api_version}")
     app.include_router(forex_router, prefix="/api")  # /api/forex/quote · /api/forex/candles
+    app.include_router(backtest_router, prefix="/api")  # POST /api/backtest
 
     # ---------- Нэгдсэн error handling ----------
 

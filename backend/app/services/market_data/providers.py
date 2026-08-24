@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
@@ -36,6 +37,9 @@ from app.schemas.market import Interval
 logger = logging.getLogger("forex_analyzer.market")
 
 _DEFAULT_RETRY_AFTER_S = 60
+_MAX_RANGE_PAGES = 8  # backtest range fetch-ийн дээд хуудас
+_PAGE_SIZE = 5000  # Twelve Data outputsize дээд хязгаар
+_PAGE_DELAY_S = 0.15  # хуудас хоорондын зай (rate limit-д зөөлөн)
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,11 @@ class MarketDataProvider(Protocol):
 
     async def fetch_time_series(self, symbol: str, interval: Interval, outputsize: int) -> list[RawBar]:
         """`outputsize` ширхэг OHLC лааг цагаар өсөх эрэмбээр буцаана."""
+
+    async def fetch_time_series_range(
+        self, symbol: str, interval: Interval, start: datetime, end: datetime
+    ) -> list[RawBar]:
+        """[start, end] мужийн OHLC лаануудыг цагаар өсөх эрэмбээр буцаана (backtest)."""
 
     async def fetch_quote(self, symbol: str) -> RawQuote:
         """Сүүлийн үнэ (mid) буцаана."""
@@ -197,6 +206,58 @@ class TwelveDataProvider:
                 "format": "JSON",
             },
         )
+        bars = self._parse_values(data)
+        bars.sort(key=lambda b: b.timestamp)
+        logger.info("time_series: %s → %d лаан", symbol, len(bars))
+        return bars
+
+    async def fetch_time_series_range(
+        self, symbol: str, interval: Interval, start: datetime, end: datetime
+    ) -> list[RawBar]:
+        """[start, end] мужийн лаанууд — outputsize=5000 хязгаар тул хуудаслалттай.
+
+        Төвөгтэй байдлаас зайлсхийх үүднээс end_date-ийг аажим ухрааж, давхардлыг
+        timestamp-аар няцаана. Rate limit-д хүндэтгэлтэй: хуудас бүрийн хооронд
+        богино зай авна.
+        """
+        logger.info("time_series_range: %s %s [%s → %s]", symbol, interval.value, start, end)
+        collected: dict[datetime, RawBar] = {}
+        cursor_end = end
+        for _ in range(_MAX_RANGE_PAGES):
+            data = await self._get_json(
+                "/time_series",
+                {
+                    "symbol": symbol,
+                    "interval": interval.value,
+                    "outputsize": _PAGE_SIZE,
+                    "order": "ASC",
+                    "timezone": "UTC",
+                    "format": "JSON",
+                    "start_date": start.strftime("%Y-%m-%d %H:%M:%S"),
+                    "end_date": cursor_end.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            )
+            bars = self._parse_values(data)
+            if not bars:
+                break
+            for bar in bars:
+                collected[bar.timestamp] = bar
+            oldest = min(b.timestamp for b in bars)
+            if oldest <= start:
+                break
+            # Дараагийн хуудас: хамгийн эртний лаанаас өмнөх муж
+            cursor_end = oldest - timedelta(seconds=1)
+            if cursor_end <= start:
+                break
+            await asyncio.sleep(_PAGE_DELAY_S)  # rate limit-д зөөлөн хандах
+
+        result = sorted(collected.values(), key=lambda b: b.timestamp)
+        logger.info("time_series_range: %s → %d лаан", symbol, len(result))
+        return result
+
+    @staticmethod
+    def _parse_values(data: dict[str, Any]) -> list[RawBar]:
+        """'values' жагсаалтыг RawBar болгон хөрвүүлнэ (ерөнхий helper)."""
         values = data.get("values")
         if not isinstance(values, list):
             raise ProviderUnavailableError("Provider хариу 'values' жагсаалтгүй байна")
@@ -213,8 +274,6 @@ class TwelveDataProvider:
                     close=_to_float(item.get("close"), "close"),
                 )
             )
-        bars.sort(key=lambda b: b.timestamp)
-        logger.info("time_series: %s → %d лаан", symbol, len(bars))
         return bars
 
     async def fetch_quote(self, symbol: str) -> RawQuote:
@@ -245,32 +304,72 @@ class SampleDataProvider:
         "NZD/USD": 0.5950,
     }
 
+    def __init__(self) -> None:
+        self._trend_cache: dict[str, list[tuple[float, float, float]]] = {}
+
     async def aclose(self) -> None:  # pragma: no cover — нөөц байхгүй
         return None
 
-    def _series(self, symbol: str, interval: Interval, size: int) -> list[RawBar]:
-        rng = random.Random(f"{symbol}|{interval.value}")
+    def _trend_factor(self, symbol: str, t: int) -> float:
+        """Детерминист, t-ээс хамаарсан зөлгөө тренд (хэдэн синус долгионы нийлбэр).
+
+        Ижил t → ижил тренд тул давхцсан мужуудад үнэ тогтвортой байна. Тренд нь
+        EMA20/50 огтлолцол үүсгэж, backtest-д бодит BUY/SELL гарах нөхцөл бүрдүүлнэ.
+        """
+        key = f"{symbol}|trend"
+        if key not in self._trend_cache:
+            rng = random.Random(key)
+            periods = [3600 * 4, 3600 * 9, 3600 * 20, 86400 * 2.7, 86400 * 6.3]
+            self._trend_cache[key] = [
+                (rng.uniform(0.002, 0.0055), rng.choice(periods), rng.uniform(0, 2 * math.pi))
+                for _ in range(5)
+            ]
+        total = 0.0
+        for amp, period, phase in self._trend_cache[key]:
+            total += amp * math.sin(2 * math.pi * t / period + phase)
+        return 1.0 + total
+
+    def _series_range(self, symbol: str, interval: Interval, start: datetime, end: datetime) -> list[RawBar]:
+        """[start, end] мужид детерминист лаанууд үүсгэнэ."""
         base = self._BASE_PRICES.get(symbol, 1.0)
-        vol = 0.0006 * ((interval.seconds / 300) ** 0.5)  # timeframe-аас хамаарсан хэлбэлзэл
+        vol = 0.0006 * ((interval.seconds / 300) ** 0.5)
+        step = interval.seconds
 
-        end = int(datetime.now(timezone.utc).timestamp())
-        end -= end % interval.seconds  # interval-ын хилд эгнүүлнэ
+        t0 = int(start.timestamp())
+        t0 -= t0 % step  # interval-ын хилд эгнүүлнэ
+        t1 = int(end.timestamp())
 
-        price = base * (1 + rng.uniform(-0.004, 0.004))
         bars: list[RawBar] = []
-        for i in range(size):
-            ts = datetime.fromtimestamp(end - (size - 1 - i) * interval.seconds, tz=timezone.utc)
-            o = price
+        t = t0
+        while t <= t1:
+            rng = random.Random(f"{symbol}|{interval.value}|{t}")
+            trend = self._trend_factor(symbol, t)
+            o = base * trend * (1 + rng.uniform(-0.0008, 0.0008))
             c = o * (1 + rng.gauss(0.0, vol))
             hi = max(o, c) * (1 + abs(rng.gauss(0.0, vol / 3)))
             lo = min(o, c) * (1 - abs(rng.gauss(0.0, vol / 3)))
+            ts = datetime.fromtimestamp(t, tz=timezone.utc)
             bars.append(RawBar(timestamp=ts, open=o, high=hi, low=lo, close=c))
-            price = c
+            t += step
         return bars
+
+    def _series(self, symbol: str, interval: Interval, size: int) -> list[RawBar]:
+        """Сүүлийн `size` лаа (одоо цагаас ухрааж) — `_series_range` дээр суурилна."""
+        now = int(datetime.now(timezone.utc).timestamp())
+        now -= now % interval.seconds
+        start = datetime.fromtimestamp(now - (size - 1) * interval.seconds, tz=timezone.utc)
+        end = datetime.fromtimestamp(now, tz=timezone.utc)
+        return self._series_range(symbol, interval, start, end)
 
     async def fetch_time_series(self, symbol: str, interval: Interval, outputsize: int) -> list[RawBar]:
         logger.info("sample time_series: %s %s ×%d", symbol, interval.value, outputsize)
         return self._series(symbol, interval, outputsize)
+
+    async def fetch_time_series_range(
+        self, symbol: str, interval: Interval, start: datetime, end: datetime
+    ) -> list[RawBar]:
+        logger.info("sample time_series_range: %s %s [%s → %s]", symbol, interval.value, start, end)
+        return self._series_range(symbol, interval, start, end)
 
     async def fetch_quote(self, symbol: str) -> RawQuote:
         bars = self._series(symbol, Interval.M5, 50)

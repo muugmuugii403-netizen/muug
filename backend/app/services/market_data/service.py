@@ -14,6 +14,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Awaitable, Callable
 
 from app.core.errors import SymbolNotSupportedError
@@ -71,6 +72,23 @@ class MarketDataService:
             fetch=lambda: self.provider.fetch_quote(symbol),
         )
         return self._synthesize_quote(pair, raw, self._source())
+
+    async def get_candles_range(
+        self, symbol: str, interval: Interval, start: datetime, end: datetime
+    ) -> list[Candle]:
+        """[start, end] мужийн түүхэн лаанууд (backtest-д зориулав).
+
+        Range нь өөр өөр байх тул cache key-д мужийг оруулна; TTL нь ердийн
+        candles-тэй ижил (хуучин өгөгдөл өөрчлөгдөхгүй ч credit хэмнэлт хэвээр).
+        """
+        self._require_pair(symbol)
+        key = f"range:{symbol}:{interval.value}:{start.isoformat()}:{end.isoformat()}"
+        bars: list[RawBar] = await self._cached(
+            key=key,
+            ttl_s=self.candles_ttl_s,
+            fetch=lambda: self.provider.fetch_time_series_range(symbol, interval, start, end),
+        )
+        return self._to_candles(bars)
 
     async def aclose(self) -> None:
         await self.provider.aclose()

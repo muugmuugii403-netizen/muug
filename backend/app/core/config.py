@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     market_data_timeout_s: float = Field(default=8.0, gt=0)
     market_data_retries: int = Field(default=3, ge=0, le=10)
 
+    # --- Backtest (Step 6) ---
+    backtest_max_range_days: int = Field(default=31, ge=1, le=365)
+    backtest_min_candles_5m: int = Field(default=120, ge=60)
+    backtest_min_candles_15m: int = Field(default=60, ge=55)
+
     @field_validator("cors_origins")
     @classmethod
     def _strip_origins(cls, v: str) -> str:

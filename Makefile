@@ -16,7 +16,7 @@ backend-init:
 	cd backend && $(PYTHON) -m venv .venv
 	cd backend && .venv/bin/pip install --upgrade pip
 	cd backend && .venv/bin/pip install -r requirements.txt
-	@for d in app app/core app/api app/schemas app/services app/services/market_data app/services/analysis app/services/ai app/utils tests; do \
+	@for d in app app/core app/api app/schemas app/services app/services/market_data app/services/analysis app/services/ai app/services/backtest app/utils tests; do \
 		mkdir -p backend/$$d && touch backend/$$d/__init__.py; \
 	done
 	@cd backend && cp -n .env.example .env || true
