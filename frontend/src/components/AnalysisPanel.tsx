@@ -7,6 +7,7 @@
  */
 import type { ReactNode } from "react";
 import { SIGNAL_META, type AnalysisResponse, type SignalDirection } from "@/lib/analysis";
+import { AnalysisSkeleton } from "./Skeletons";
 
 function Block({ title, text }: { title: string; text: string }): ReactNode {
   return (
@@ -43,14 +44,9 @@ export function AnalysisPanel({
 }): ReactNode {
   if (loading) {
     return (
-      <section className="rounded-md border border-line bg-panel/60 p-5">
-        <div className="h-5 w-48 animate-pulse rounded-sm bg-panel2" />
-        <div className="mt-4 space-y-2.5">
-          <div className="h-3.5 w-full animate-pulse rounded-sm bg-panel2" />
-          <div className="h-3.5 w-11/12 animate-pulse rounded-sm bg-panel2" />
-          <div className="h-3.5 w-4/5 animate-pulse rounded-sm bg-panel2" />
-        </div>
-        <p className="mt-4 font-mono text-[11px] text-dim">Qwen AI тайлбар бэлтгэж байна…</p>
+      <section className="rounded-md border border-line bg-panel/60">
+        <AnalysisSkeleton />
+        <p className="px-6 pb-5 font-mono text-[11px] text-dim">Qwen AI тайлбар бэлтгэж байна…</p>
       </section>
     );
   }

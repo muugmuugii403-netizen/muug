@@ -1,273 +1,308 @@
 "use client";
 
 /**
- * Market Data хуудас (Step 2).
+ * Forex AI Analyzer — нэг дэлгэцийн dashboard (Step 5).
  *
- * Зөвхөн өгөгдлийн давхарга: pair сонгох → 5M/15M сонгох → candles + quote
- * авах → chart + үнийн самбар. RSI/MACD/EMA/Signal/AI — дараагийн алхамууд.
+ * Бүтэц: Header → Pair/Timeframe → Market summary → Chart | Signal →
+ * 5M/15M техникийн шинжилгээ → AI тайлбар.
+ *
+ * Архитектурын дараалал хэвээр: Forex API → FastAPI → Indicator → Signal
+ * Engine → Qwen AI → Frontend. Frontend ямар ч BUY/SELL шийдвэр гаргахгүй,
+ * зөвхөн backend-ийн хариуг харуулна.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { CandleChart } from "@/components/CandleChart";
-import { QuotePanel } from "@/components/QuotePanel";
+import { DashboardHeader } from "@/components/DashboardHeader";
+import { PairTimeframeSelector } from "@/components/PairTimeframeSelector";
+import { MarketSummaryCard } from "@/components/MarketSummaryCard";
 import { SignalPanel } from "@/components/SignalPanel";
+import { TfAnalysisCard } from "@/components/TfAnalysisCard";
+import { AnalysisPanel } from "@/components/AnalysisPanel";
+import { ChartSkeleton, SignalSkeleton, TfCardSkeleton } from "@/components/Skeletons";
 import { ApiError } from "@/lib/api";
-import { getAnalysis, type AnalysisResponse } from "@/lib/analysis";
 import {
   FOREX_PAIRS,
   getCandles,
   getQuote,
+  spreadInPips,
   type CandlesResponse,
   type Interval,
   type QuoteResponse,
 } from "@/lib/market";
+import { getAnalysis, type AnalysisResponse } from "@/lib/analysis";
 
-type Loadable<T> =
-  | { status: "loading" }
-  | { status: "ok"; data: T }
-  | { status: "error"; message: string };
+type Loaded<T> = { status: "ok"; payload: T };
+type Loading = { status: "loading" };
+type Failed = { status: "error"; message: string };
+type Loadable<T> = Loaded<T> | Loading | Failed;
 
 const msgOf = (e: unknown): string => (e instanceof ApiError ? e.message : "Тодорхойгүй алдаа гарлаа");
 
-export default function MarketDataPage(): ReactNode {
+const REFRESH_MS = 20_000; // market data auto-refresh (backend TTL cache credit-ийг хамгаална)
+
+export default function DashboardPage(): ReactNode {
   const [symbol, setSymbol] = useState("EUR/USD");
   const [interval, setInterval] = useState<Interval>("5min");
   const [candles, setCandles] = useState<Loadable<CandlesResponse>>({ status: "loading" });
   const [quote, setQuote] = useState<Loadable<QuoteResponse>>({ status: "loading" });
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysis, setAnalysis] = useState<Loadable<AnalysisResponse>>({ status: "loading" });
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [spin, setSpin] = useState(false);
 
   const pair = FOREX_PAIRS.find((p) => p.symbol === symbol) ?? FOREX_PAIRS[0];
+  const decimals = pair?.pipDecimals ?? 5;
+
+  // Хүсэлтийн дугаар: хуучирсан хариуг state-д бичихээс сэргийлнэ (race condition)
   const candleReq = useRef(0);
   const quoteReq = useRef(0);
   const analysisReq = useRef(0);
+  const prevPrice = useRef<number | null>(null);
+  const [priceDir, setPriceDir] = useState<"up" | "down" | null>(null);
 
-  const loadCandles = useCallback(
-    async (sym: string, tf: Interval): Promise<void> => {
-      const id = ++candleReq.current;
-      setCandles({ status: "loading" });
-      try {
-        const data = await getCandles(sym, tf, 200);
-        if (id === candleReq.current) setCandles({ status: "ok", data });
-      } catch (e) {
-        if (id === candleReq.current) setCandles({ status: "error", message: msgOf(e) });
-      }
-    },
-    [],
-  );
+  /* ---------- ачаалагч функцууд ---------- */
+
+  const loadCandles = useCallback(async (sym: string, tf: Interval): Promise<void> => {
+    const id = ++candleReq.current;
+    setCandles({ status: "loading" });
+    try {
+      const data = await getCandles(sym, tf, 200);
+      if (id !== candleReq.current) return;
+      setCandles({ status: "ok", payload: data });
+      setLastUpdate(new Date());
+    } catch (e) {
+      if (id === candleReq.current) setCandles({ status: "error", message: msgOf(e) });
+    }
+  }, []);
 
   const loadQuote = useCallback(async (sym: string): Promise<void> => {
     const id = ++quoteReq.current;
     setQuote((prev) => (prev.status === "ok" ? prev : { status: "loading" }));
     try {
       const data = await getQuote(sym);
-      if (id === quoteReq.current) setQuote({ status: "ok", data });
+      if (id !== quoteReq.current) return;
+      const prev = prevPrice.current;
+      if (prev !== null && data.price !== prev) setPriceDir(data.price > prev ? "up" : "down");
+      prevPrice.current = data.price;
+      setQuote({ status: "ok", payload: data });
+      setLastUpdate(new Date());
     } catch (e) {
       if (id === quoteReq.current) setQuote({ status: "error", message: msgOf(e) });
     }
   }, []);
 
-  // Analysis: signal + AI тайлбар (AI-г секунд бүр дуудахгүй — зөвхөн symbol солиход + товчоор)
+  // AI-г зөвхөн symbol солигдох үед дуудна (refresh бүр биш) — backend cache-тай
   const loadAnalysis = useCallback(async (sym: string): Promise<void> => {
     const id = ++analysisReq.current;
-    setAnalysisLoading(true);
+    setAnalysis({ status: "loading" });
     try {
       const data = await getAnalysis(sym);
-      if (id === analysisReq.current) setAnalysis(data);
-    } catch {
-      // AI/signal алдаа гарсан ч chart хэвийн — analysis-ийг хоосон үлдээнэ
-      if (id === analysisReq.current) setAnalysis(null);
-    } finally {
-      if (id === analysisReq.current) setAnalysisLoading(false);
+      if (id === analysisReq.current) setAnalysis({ status: "ok", payload: data });
+    } catch (e) {
+      if (id === analysisReq.current) setAnalysis({ status: "error", message: msgOf(e) });
     }
   }, []);
 
-  // pair / interval солигдох бүр candles + quote шинэчилнэ
+  /* ---------- эффектүүд ---------- */
+
+  // Pair / interval солигдох бүр chart + quote; pair солигдох бүр шинжилгээ
   useEffect(() => {
     void loadCandles(symbol, interval);
     void loadQuote(symbol);
   }, [symbol, interval, loadCandles, loadQuote]);
 
-  // pair солигдох бүр шинжилгээ (signal + AI тайлбар) авна
   useEffect(() => {
+    prevPrice.current = null;
     void loadAnalysis(symbol);
   }, [symbol, loadAnalysis]);
 
-  // auto-refresh: 20с тутам quote (backend TTL cache credit-ийг хамгаална)
+  // Auto-refresh: зөвхөн market data (chart + quote). AI дахин дуудагдахгүй.
   useEffect(() => {
-    if (!autoRefresh) return;
-    const id = window.setInterval(() => void loadQuote(symbol), 20_000);
+    const id = window.setInterval(() => {
+      void loadCandles(symbol, interval);
+      void loadQuote(symbol);
+    }, REFRESH_MS);
     return () => window.clearInterval(id);
-  }, [autoRefresh, symbol, loadQuote]);
+  }, [symbol, interval, loadCandles, loadQuote]);
+
+  // Бүх мөрийг шинэчлэх (товчоор) — AI-г backend cache-аар дамжуулан дуудна
+  const refreshAll = useCallback(async (): Promise<void> => {
+    setSpin(true);
+    await Promise.all([loadCandles(symbol, interval), loadQuote(symbol), loadAnalysis(symbol)]);
+    setSpin(false);
+  }, [symbol, interval, loadCandles, loadQuote, loadAnalysis]);
+
+  /* ---------- утгууд ---------- */
+
+  const price = quote.status === "ok" ? quote.payload.price : null;
+  const spreadPips = quote.status === "ok" ? spreadInPips(symbol, quote.payload.spread) : null;
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
-      {/* header */}
-      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-line pb-6">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-cy">Forex Analyzer</p>
-          <h1 className="font-display mt-1 text-2xl font-bold text-mist sm:text-[28px]">Market Data</h1>
-        </div>
-        <div className="flex items-center gap-2 font-mono text-[11.5px] text-dim">
-          <span className="rounded-sm border border-line px-2.5 py-1">
-            GET <span className="text-fog">/api/forex/quote</span>
-          </span>
-          <span className="rounded-sm border border-line px-2.5 py-1">
-            GET <span className="text-fog">/api/forex/candles</span>
-          </span>
-        </div>
-      </header>
+    <div className="min-h-screen bg-ink">
+      <DashboardHeader lastUpdate={lastUpdate} onRefresh={() => void refreshAll()} refreshing={spin} />
 
-      {/* selector */}
-      <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-4">
-        <div className="flex flex-wrap gap-2">
-          {FOREX_PAIRS.map((p) => (
-            <button
-              key={p.symbol}
-              type="button"
-              onClick={() => setSymbol(p.symbol)}
-              title={p.name}
-              className={`rounded-sm border px-3.5 py-2 font-mono text-[13px] transition-all duration-150 ${
-                p.symbol === symbol
-                  ? "border-cy/60 bg-cy/10 text-mist shadow-[0_0_18px_-6px_rgba(69,214,228,0.55)]"
-                  : "border-line text-fog hover:border-edge hover:text-mist"
-              }`}
-            >
-              {p.symbol}
-            </button>
-          ))}
-        </div>
-        <div className="flex overflow-hidden rounded-sm border border-line">
-          {(["5min", "15min"] as const).map((tf) => (
-            <button
-              key={tf}
-              type="button"
-              onClick={() => setInterval(tf)}
-              className={`px-4 py-2 font-mono text-[13px] transition-colors ${
-                interval === tf ? "bg-buy/15 text-buy" : "bg-panel text-dim hover:text-fog"
-              }`}
-            >
-              {tf === "5min" ? "5M" : "15M"}
-            </button>
-          ))}
-        </div>
-      </div>
+      <main className="mx-auto w-full max-w-7xl px-5 py-6 sm:px-8">
+        {/* Pair + timeframe */}
+        <PairTimeframeSelector
+          symbol={symbol}
+          interval={interval}
+          onSymbol={setSymbol}
+          onInterval={setInterval}
+        />
 
-      {/* content */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
-        <div className="space-y-4">
-          <QuotePanel
-            quote={quote.status === "ok" ? quote.data : null}
-            pipDecimals={pair?.pipDecimals ?? 5}
-            loading={quote.status === "loading"}
-            error={quote.status === "error" ? quote.message : null}
-            autoRefresh={autoRefresh}
-            onToggleAuto={() => setAutoRefresh((v) => !v)}
-            onRefresh={() => void loadQuote(symbol)}
-          />
-
-          <section className="rounded-md border border-line bg-panel/40 p-4 text-[12.5px] leading-relaxed text-dim">
-            <p className="font-mono text-[10.5px] uppercase tracking-wider text-dim">Эх сурвалж</p>
-            <ul className="mt-2 space-y-1.5">
-              <li>
-                <span className="text-buy">LIVE</span> — Twelve Data API (backend .env-ийн key, frontend-д хэзээ ч
-                харагдахгүй)
-              </li>
-              <li>
-                <span className="text-wait">SAMPLE</span> — key хоосон үеийн детерминист локал өгөгдөл
-              </li>
-              <li>Bid/ask нь mid price + pair-ийн typical spread-ээс тооцогдоно (Twelve Data quote bid/ask буцаадаггүй)</li>
-              <li>Rate limit: 8 credit/мин — frontend 20с auto-refresh, backend TTL cache</li>
-            </ul>
-          </section>
+        {/* Market summary */}
+        <div className="mt-5">
+          {analysis.status === "ok" ? (
+            <MarketSummaryCard signal={analysis.payload.signal} decimals={decimals} />
+          ) : analysis.status === "loading" ? (
+            <div className="h-[86px] animate-pulse rounded-md bg-panel2/50" />
+          ) : null}
         </div>
 
-        {/* chart */}
-        <section className="flex min-w-0 flex-col rounded-md border border-line bg-panel/60">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-            <p className="font-mono text-[12.5px] text-fog">
-              <span className="text-mist">{symbol}</span> · {interval} ·{" "}
-              {candles.status === "ok" ? `${candles.data.count} лаан` : "…"}
-            </p>
-            {candles.status === "ok" && (
-              <span
-                className={`rounded-sm border px-2 py-0.5 font-mono text-[10px] tracking-wider ${
-                  candles.data.source === "sample" ? "border-wait/50 text-wait" : "border-buy/50 text-buy"
-                }`}
-              >
-                {candles.data.source === "sample" ? "SAMPLE DATA" : "TWELVE DATA"}
-              </span>
-            )}
-          </div>
-          <div className="relative h-[440px] p-2">
-            {candles.status === "loading" && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-panel/40">
-                <p className="animate-pulse font-mono text-[13px] text-fog">Лаануудыг ачаалж байна…</p>
+        {/* Chart | Signal */}
+        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+          {/* Chart */}
+          <section className="flex min-w-0 flex-col rounded-md border border-line bg-panel/60">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-4 py-3">
+              <div className="flex items-baseline gap-3">
+                <h2 className="font-mono text-[15px] font-bold text-mist">{symbol}</h2>
+                <span className="font-mono text-[11px] uppercase tracking-wider text-dim">
+                  {interval === "5min" ? "5 минут" : "15 минут"}
+                </span>
+                {candles.status === "ok" && (
+                  <span
+                    className={`rounded-sm border px-1.5 py-px font-mono text-[9.5px] tracking-wider ${
+                      candles.payload.source === "sample" ? "border-wait/50 text-wait" : "border-buy/50 text-buy"
+                    }`}
+                  >
+                    {candles.payload.source === "sample" ? "SAMPLE" : "LIVE"}
+                  </span>
+                )}
               </div>
-            )}
-            {candles.status === "error" && (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-panel/60">
-                <p className="max-w-sm px-6 text-center font-mono text-[12.5px] text-sell">✕ {candles.message}</p>
+              <div className="flex items-baseline gap-3">
+                <span
+                  className={`font-mono text-[22px] font-extrabold tabular-nums transition-colors duration-500 ${
+                    priceDir === "up" ? "text-buy" : priceDir === "down" ? "text-sell" : "text-mist"
+                  }`}
+                >
+                  {price !== null ? price.toFixed(decimals) : "—"}
+                </span>
+                {spreadPips !== null && (
+                  <span className="font-mono text-[11px] text-dim">spread {spreadPips.toFixed(1)} pips</span>
+                )}
+              </div>
+            </div>
+
+            <div className="relative h-[420px] p-2">
+              {candles.status === "loading" && (
+                <div className="absolute inset-0 z-10">
+                  <ChartSkeleton />
+                </div>
+              )}
+              {candles.status === "error" && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-panel/70">
+                  <p className="max-w-sm px-6 text-center font-mono text-[12.5px] text-sell">✕ {candles.message}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadCandles(symbol, interval)}
+                    className="rounded-sm border border-line px-4 py-2 font-mono text-[12px] text-fog transition-colors hover:border-edge hover:text-mist"
+                  >
+                    ↻ Дахин оролдох
+                  </button>
+                </div>
+              )}
+              {candles.status === "ok" ? (
+                <CandleChart candles={candles.payload.candles} />
+              ) : (
+                <div className="h-full w-full" />
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-line px-4 py-2.5 font-mono text-[11px] text-dim">
+              <span className="flex items-center gap-1.5">
+                <span className="h-0.5 w-4 rounded bg-cy" /> EMA 20
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-0.5 w-4 rounded bg-wait" /> EMA 50
+              </span>
+              <span className="ml-auto">zoom · pan · crosshair идэвхтэй</span>
+            </div>
+          </section>
+
+          {/* Signal */}
+          <aside className="min-w-0">
+            {analysis.status === "loading" ? (
+              <div className="rounded-md border border-line bg-panel/60">
+                <SignalSkeleton />
+              </div>
+            ) : analysis.status === "error" ? (
+              <div className="rounded-md border border-line bg-panel/60 p-5">
+                <p className="font-mono text-[12.5px] text-sell">✕ {analysis.message}</p>
                 <button
                   type="button"
-                  onClick={() => void loadCandles(symbol, interval)}
-                  className="rounded-sm border border-line px-4 py-2 font-mono text-[12px] text-fog transition-colors hover:border-edge hover:text-mist"
+                  onClick={() => void loadAnalysis(symbol)}
+                  className="mt-3 rounded-sm border border-line px-4 py-2 font-mono text-[12px] text-fog transition-colors hover:border-edge hover:text-mist"
                 >
                   ↻ Дахин оролдох
                 </button>
               </div>
-            )}
-            {candles.status === "ok" ? (
-              <CandleChart candles={candles.data.candles} />
             ) : (
-              <div className="h-full w-full animate-pulse rounded-sm bg-panel2/50" />
+              <SignalPanel signal={analysis.payload.signal} decimals={decimals} />
             )}
-          </div>
-          <p className="border-t border-line px-4 py-2.5 font-mono text-[11px] text-dim">
-            EMA · RSI · MACD · ATR · Support/Resistance → deterministic signal доор
-          </p>
-        </section>
-      </div>
-
-      {/* ===== Step 3 + 4: Signal + AI тайлбар ===== */}
-      <div className="mt-10">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-cy">Signal Engine + AI</p>
-            <h2 className="font-display mt-0.5 text-lg font-bold text-mist">Дүн шинжилгээ</h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadAnalysis(symbol)}
-            disabled={analysisLoading}
-            className="rounded-sm border border-buy/50 bg-buy/15 px-4 py-2 font-mono text-[12.5px] text-buy transition-colors hover:bg-buy/25 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {analysisLoading ? "Шинжилж байна…" : "↻ Шинжилгээ шинэчлэх"}
-          </button>
+          </aside>
         </div>
 
-        <div className="mt-4 grid gap-6 lg:grid-cols-2">
-          {analysis?.signal ? (
-            <SignalPanel signal={analysis.signal} decimals={pair?.pipDecimals ?? 5} />
+        {/* 5M / 15M техникийн шинжилгээ */}
+        <div className="mt-5 grid gap-5 md:grid-cols-2">
+          {analysis.status === "ok" ? (
+            <>
+              <TfAnalysisCard tf="5M" data={analysis.payload.signal.timeframes["5m"]} decimals={decimals} />
+              <TfAnalysisCard tf="15M" data={analysis.payload.signal.timeframes["15m"]} decimals={decimals} />
+            </>
+          ) : analysis.status === "loading" ? (
+            <>
+              <div className="rounded-md border border-line bg-panel/60">
+                <TfCardSkeleton />
+              </div>
+              <div className="rounded-md border border-line bg-panel/60">
+                <TfCardSkeleton />
+              </div>
+            </>
+          ) : null}
+        </div>
+
+        {/* AI тайлбар */}
+        <div className="mt-5">
+          {analysis.status === "loading" ? (
+            <AnalysisPanel analysis={null} loading signal={null} />
+          ) : analysis.status === "ok" ? (
+            <AnalysisPanel
+              analysis={analysis.payload}
+              loading={false}
+              signal={analysis.payload.signal.signal}
+            />
           ) : (
-            <section className="flex items-center justify-center rounded-md border border-line bg-panel/60 p-10">
-              <p className="animate-pulse font-mono text-[13px] text-dim">Signal тооцоолж байна…</p>
-            </section>
+            <div className="rounded-md border border-line bg-panel/60 p-5">
+              <p className="font-mono text-[12.5px] text-sell">✕ Шинжилгээ авах боломжгүй: {analysis.message}</p>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-fog">
+                Market data chart дээр хэвийн харагдаж байна. Шинжилгээг дахин оролдоно уу.
+              </p>
+              <button
+                type="button"
+                onClick={() => void loadAnalysis(symbol)}
+                className="mt-3 rounded-sm border border-line px-4 py-2 font-mono text-[12px] text-fog transition-colors hover:border-edge hover:text-mist"
+              >
+                ↻ Дахин оролдох
+              </button>
+            </div>
           )}
-          <AnalysisPanel
-            analysis={analysis}
-            loading={analysisLoading}
-            signal={analysis?.signal.signal ?? null}
-          />
         </div>
 
-        <p className="mt-4 rounded-md border border-line bg-panel/40 p-4 text-[12.5px] leading-relaxed text-dim">
-          ⚠ Signal нь зөвхөн technical indicator дээр суурилсан <span className="text-buy">deterministic</span> дүрмээр
-          гарна. AI (Qwen) нь зөвхөн тайлбар бичдэг бөгөөд signal/оноо/үнэд хэзээ ч нөлөөлөхгүй. Энэ систем баталгаатай
-          ашиг амлахгүй.
+        {/* Хөл тайлбар */}
+        <p className="mt-6 border-t border-line pt-4 text-center font-mono text-[10.5px] leading-relaxed text-dim">
+          Signal нь зөвхөн техникийн indicator дээр суурилсан детерминист тооцоо бөгөөд баталгаатай ашиг амлахгүй.
+          AI тайлбар нь signal-д нөлөөлдөггүй.
         </p>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
