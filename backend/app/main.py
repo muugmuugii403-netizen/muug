@@ -16,8 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.forex import router as forex_router
 from app.api.routes import router
 from app.core.config import get_settings
+from app.core.errors import MarketDataError
 from app.schemas.analysis import ErrorResponse
 
 logger = logging.getLogger("forex_analyzer")
@@ -76,6 +78,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router, prefix=f"/api/{settings.api_version}")
+    app.include_router(forex_router, prefix="/api")  # /api/forex/quote · /api/forex/candles
 
     # ---------- Нэгдсэн error handling ----------
 
@@ -93,6 +96,17 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def on_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         return _error_response(request, "http_error", str(exc.detail), exc.status_code)
+
+    @app.exception_handler(MarketDataError)
+    async def on_market_error(request: Request, exc: MarketDataError) -> JSONResponse:
+        """Market data алдаанууд: 404 / 429 (Retry-After) / 502 / 503 / 504."""
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        logger.warning("Market data алдаа [%s] %s: %s", exc.code, request.url.path, exc.message)
+        return JSONResponse(
+            status_code=exc.status,
+            content=ErrorResponse(error=exc.code, detail=exc.message, path=request.url.path).model_dump(mode="json"),
+            headers=headers,
+        )
 
     @app.exception_handler(Exception)
     async def on_unexpected(request: Request, exc: Exception) -> JSONResponse:

@@ -1,167 +1,207 @@
 "use client";
 
 /**
- * Нүүр хуудас (Step 1):
- *  1. Backend-ийн холболтын статусыг /health-ээр шалгана (latency-тай)
- *  2. Pair жагсаалтыг /pairs-аас авна
- *  3. Шинжилгээний хүсэлтийг /analysis руу илгээнэ → одоогоор 501 (engine Step 2)
+ * Market Data хуудас (Step 2).
+ *
+ * Зөвхөн өгөгдлийн давхарга: pair сонгох → 5M/15M сонгох → candles + quote
+ * авах → chart + үнийн самбар. RSI/MACD/EMA/Signal/AI — дараагийн алхамууд.
  */
-import { useCallback, useEffect, useState } from "react";
-import { PairSelector } from "@/components/PairSelector";
-import { ApiError, API_BASE_URL, getHealth, getPairs, postAnalysis } from "@/lib/api";
-import type { AnalysisRequest, HealthResponse, PairInfo } from "@/lib/types";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { CandleChart } from "@/components/CandleChart";
+import { QuotePanel } from "@/components/QuotePanel";
+import { ApiError } from "@/lib/api";
+import {
+  FOREX_PAIRS,
+  getCandles,
+  getQuote,
+  type CandlesResponse,
+  type Interval,
+  type QuoteResponse,
+} from "@/lib/market";
 
-type Status<T> =
-  | { state: "loading" }
-  | { state: "ok"; data: T; latencyMs?: number }
-  | { state: "error"; message: string };
+type Loadable<T> =
+  | { status: "loading" }
+  | { status: "ok"; data: T }
+  | { status: "error"; message: string };
 
-export default function HomePage() {
-  const [health, setHealth] = useState<Status<HealthResponse>>({ state: "loading" });
-  const [pairs, setPairs] = useState<Status<PairInfo[]>>({ state: "loading" });
-  const [analysis, setAnalysis] = useState<{ busy: boolean; error: ApiError | null }>({
-    busy: false,
-    error: null,
-  });
+const msgOf = (e: unknown): string => (e instanceof ApiError ? e.message : "Тодорхойгүй алдаа гарлаа");
 
-  const checkHealth = useCallback(async (): Promise<void> => {
-    setHealth({ state: "loading" });
-    const t0 = performance.now();
+export default function MarketDataPage(): ReactNode {
+  const [symbol, setSymbol] = useState("EUR/USD");
+  const [interval, setInterval] = useState<Interval>("5min");
+  const [candles, setCandles] = useState<Loadable<CandlesResponse>>({ status: "loading" });
+  const [quote, setQuote] = useState<Loadable<QuoteResponse>>({ status: "loading" });
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const pair = FOREX_PAIRS.find((p) => p.symbol === symbol) ?? FOREX_PAIRS[0];
+  const candleReq = useRef(0);
+  const quoteReq = useRef(0);
+
+  const loadCandles = useCallback(
+    async (sym: string, tf: Interval): Promise<void> => {
+      const id = ++candleReq.current;
+      setCandles({ status: "loading" });
+      try {
+        const data = await getCandles(sym, tf, 200);
+        if (id === candleReq.current) setCandles({ status: "ok", data });
+      } catch (e) {
+        if (id === candleReq.current) setCandles({ status: "error", message: msgOf(e) });
+      }
+    },
+    [],
+  );
+
+  const loadQuote = useCallback(async (sym: string): Promise<void> => {
+    const id = ++quoteReq.current;
+    setQuote((prev) => (prev.status === "ok" ? prev : { status: "loading" }));
     try {
-      const data = await getHealth();
-      setHealth({ state: "ok", data, latencyMs: Math.round(performance.now() - t0) });
+      const data = await getQuote(sym);
+      if (id === quoteReq.current) setQuote({ status: "ok", data });
     } catch (e) {
-      setHealth({ state: "error", message: e instanceof ApiError ? e.message : "Тодорхойгүй алдаа" });
+      if (id === quoteReq.current) setQuote({ status: "error", message: msgOf(e) });
     }
   }, []);
 
+  // pair / interval солигдох бүр candles + quote шинэчилнэ
   useEffect(() => {
-    void checkHealth();
-    getPairs()
-      .then((data) => setPairs({ state: "ok", data }))
-      .catch((e: unknown) =>
-        setPairs({ state: "error", message: e instanceof ApiError ? e.message : "Pair жагсаалт авч чадсангүй" }),
-      );
-  }, [checkHealth]);
+    void loadCandles(symbol, interval);
+    void loadQuote(symbol);
+  }, [symbol, interval, loadCandles, loadQuote]);
 
-  const handleAnalyze = useCallback(async (req: AnalysisRequest): Promise<void> => {
-    setAnalysis({ busy: true, error: null });
-    try {
-      await postAnalysis(req);
-      // Step 1-д энд хүрэхгүй (backend 501 буцаана)
-      setAnalysis({ busy: false, error: new ApiError("Гэнэтийн амжилт — engine аль хэдийн хэрэгжсэн үү?", 202, "unexpected") });
-    } catch (e) {
-      setAnalysis({ busy: false, error: e instanceof ApiError ? e : new ApiError("Тодорхойгүй алдаа", 0, "unknown") });
-    }
-  }, []);
+  // auto-refresh: 20с тутам quote (backend TTL cache credit-ийг хамгаална)
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = window.setInterval(() => void loadQuote(symbol), 20_000);
+    return () => window.clearInterval(id);
+  }, [autoRefresh, symbol, loadQuote]);
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-5 py-10 sm:px-8">
-      {/* Header */}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-6">
+    <main className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
+      {/* header */}
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-line pb-6">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-cy">Forex Analyzer</p>
-          <h1 className="mt-1 text-2xl font-bold text-mist">Зах зээлийн дүн шинжилгээ</h1>
+          <h1 className="font-display mt-1 text-2xl font-bold text-mist sm:text-[28px]">Market Data</h1>
         </div>
-        <span className="rounded-sm border border-line px-3 py-1.5 font-mono text-[12px] text-fog">
-          Step 1 · scaffold
-        </span>
+        <div className="flex items-center gap-2 font-mono text-[11.5px] text-dim">
+          <span className="rounded-sm border border-line px-2.5 py-1">
+            GET <span className="text-fog">/api/forex/quote</span>
+          </span>
+          <span className="rounded-sm border border-line px-2.5 py-1">
+            GET <span className="text-fog">/api/forex/candles</span>
+          </span>
+        </div>
       </header>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_1.1fr]">
-        {/* Зүүн: холболтын статус */}
-        <section className="space-y-4">
-          <div className="rounded-md border border-line bg-panel/60 p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-mist">Backend холболт</h2>
-              <button
-                type="button"
-                onClick={() => void checkHealth()}
-                className="rounded-sm border border-line px-2.5 py-1 font-mono text-[11px] text-fog transition-colors hover:border-edge hover:text-mist"
-              >
-                ↻ дахин шалгах
-              </button>
-            </div>
-            <p className="mt-1 truncate font-mono text-[11.5px] text-dim">GET {API_BASE_URL}/health</p>
+      {/* selector */}
+      <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-4">
+        <div className="flex flex-wrap gap-2">
+          {FOREX_PAIRS.map((p) => (
+            <button
+              key={p.symbol}
+              type="button"
+              onClick={() => setSymbol(p.symbol)}
+              title={p.name}
+              className={`rounded-sm border px-3.5 py-2 font-mono text-[13px] transition-all duration-150 ${
+                p.symbol === symbol
+                  ? "border-cy/60 bg-cy/10 text-mist shadow-[0_0_18px_-6px_rgba(69,214,228,0.55)]"
+                  : "border-line text-fog hover:border-edge hover:text-mist"
+              }`}
+            >
+              {p.symbol}
+            </button>
+          ))}
+        </div>
+        <div className="flex overflow-hidden rounded-sm border border-line">
+          {(["5min", "15min"] as const).map((tf) => (
+            <button
+              key={tf}
+              type="button"
+              onClick={() => setInterval(tf)}
+              className={`px-4 py-2 font-mono text-[13px] transition-colors ${
+                interval === tf ? "bg-buy/15 text-buy" : "bg-panel text-dim hover:text-fog"
+              }`}
+            >
+              {tf === "5min" ? "5M" : "15M"}
+            </button>
+          ))}
+        </div>
+      </div>
 
-            {health.state === "loading" && (
-              <p className="mt-4 animate-pulse font-mono text-[13px] text-fog">Шалгаж байна…</p>
-            )}
-            {health.state === "ok" && (
-              <div className="mt-4 flex items-center gap-3">
-                <span className="led h-2.5 w-2.5 rounded-full bg-buy" />
-                <p className="font-mono text-[13px] text-buy">
-                  status: ok · v{health.data.version} · env: {health.data.env}
-                </p>
-                {health.latencyMs !== undefined && (
-                  <span className="ml-auto font-mono text-[12px] text-dim">{health.latencyMs}ms</span>
-                )}
-              </div>
-            )}
-            {health.state === "error" && (
-              <div className="mt-4 rounded-sm border border-sell/40 bg-sell/10 px-3 py-2.5">
-                <p className="font-mono text-[12.5px] text-sell">✕ {health.message}</p>
-                <p className="mt-1 text-[12.5px] text-fog">
-                  Backend ажиллаж байна уу? <code className="font-mono text-mist">make dev-api</code>
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Pair жагсаалт */}
-          <div className="rounded-md border border-line bg-panel/60 p-5">
-            <h2 className="text-sm font-semibold text-mist">Дэмжигдэх pair-ууд</h2>
-            <p className="mt-1 font-mono text-[11.5px] text-dim">GET {API_BASE_URL}/pairs</p>
-            {pairs.state === "loading" && (
-              <div className="mt-4 space-y-2">
-                {Array.from({ length: 3 }, (_, i) => (
-                  <div key={i} className="h-8 animate-pulse rounded-sm bg-panel2" />
-                ))}
-              </div>
-            )}
-            {pairs.state === "ok" && (
-              <ul className="mt-3 divide-y divide-line">
-                {pairs.data.map((p) => (
-                  <li key={p.symbol} className="flex items-center justify-between py-2 font-mono text-[13px]">
-                    <span className="text-mist">{p.symbol}</span>
-                    <span className="text-dim">{p.name}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {pairs.state === "error" && (
-              <p className="mt-3 font-mono text-[12.5px] text-sell">✕ {pairs.message}</p>
-            )}
-          </div>
-        </section>
-
-        {/* Баруун: сонголт + хүсэлт */}
-        <div>
-          <PairSelector
-            pairs={pairs.state === "ok" ? pairs.data : []}
-            loading={pairs.state === "loading"}
-            busy={analysis.busy}
-            onSubmit={(req) => void handleAnalyze(req)}
+      {/* content */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
+        <div className="space-y-4">
+          <QuotePanel
+            quote={quote.status === "ok" ? quote.data : null}
+            pipDecimals={pair?.pipDecimals ?? 5}
+            loading={quote.status === "loading"}
+            error={quote.status === "error" ? quote.message : null}
+            autoRefresh={autoRefresh}
+            onToggleAuto={() => setAutoRefresh((v) => !v)}
+            onRefresh={() => void loadQuote(symbol)}
           />
 
-          {analysis.error && (
-            <div className="mt-4 rounded-md border border-wait/45 bg-wait/[0.06] p-4">
-              <p className="font-mono text-[12px] text-wait">
-                HTTP {analysis.error.status} · {analysis.error.code}
-              </p>
-              <p className="mt-1 text-[13.5px] text-fog">{analysis.error.message}</p>
-              <p className="mt-2 text-[12.5px] text-dim">
-                Энэ бол Step 1-ийн <b className="text-mist">хүлээгдэж буй</b> хариу: оролт validate хийгдсэн боловч
-                deterministic engine Step 2-т хэрэгжинэ.
-              </p>
-            </div>
-          )}
-
-          <p className="mt-4 rounded-md border border-line bg-panel/40 p-4 text-[12.5px] leading-relaxed text-dim">
-            ⚠ Энэ систем баталгаатай ашиг амлахгүй. Signal нь зөвхөн техникийн indicator дээр суурилсан
-            deterministic дүрмээр гарах ба AI тайлбар нь зөвлөгөө биш.
-          </p>
+          <section className="rounded-md border border-line bg-panel/40 p-4 text-[12.5px] leading-relaxed text-dim">
+            <p className="font-mono text-[10.5px] uppercase tracking-wider text-dim">Эх сурвалж</p>
+            <ul className="mt-2 space-y-1.5">
+              <li>
+                <span className="text-buy">LIVE</span> — Twelve Data API (backend .env-ийн key, frontend-д хэзээ ч
+                харагдахгүй)
+              </li>
+              <li>
+                <span className="text-wait">SAMPLE</span> — key хоосон үеийн детерминист локал өгөгдөл
+              </li>
+              <li>Bid/ask нь mid price + pair-ийн typical spread-ээс тооцогдоно (Twelve Data quote bid/ask буцаадаггүй)</li>
+              <li>Rate limit: 8 credit/мин — frontend 20с auto-refresh, backend TTL cache</li>
+            </ul>
+          </section>
         </div>
+
+        {/* chart */}
+        <section className="flex min-w-0 flex-col rounded-md border border-line bg-panel/60">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+            <p className="font-mono text-[12.5px] text-fog">
+              <span className="text-mist">{symbol}</span> · {interval} ·{" "}
+              {candles.status === "ok" ? `${candles.data.count} лаан` : "…"}
+            </p>
+            {candles.status === "ok" && (
+              <span
+                className={`rounded-sm border px-2 py-0.5 font-mono text-[10px] tracking-wider ${
+                  candles.data.source === "sample" ? "border-wait/50 text-wait" : "border-buy/50 text-buy"
+                }`}
+              >
+                {candles.data.source === "sample" ? "SAMPLE DATA" : "TWELVE DATA"}
+              </span>
+            )}
+          </div>
+          <div className="relative h-[440px] p-2">
+            {candles.status === "loading" && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-panel/40">
+                <p className="animate-pulse font-mono text-[13px] text-fog">Лаануудыг ачаалж байна…</p>
+              </div>
+            )}
+            {candles.status === "error" && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-panel/60">
+                <p className="max-w-sm px-6 text-center font-mono text-[12.5px] text-sell">✕ {candles.message}</p>
+                <button
+                  type="button"
+                  onClick={() => void loadCandles(symbol, interval)}
+                  className="rounded-sm border border-line px-4 py-2 font-mono text-[12px] text-fog transition-colors hover:border-edge hover:text-mist"
+                >
+                  ↻ Дахин оролдох
+                </button>
+              </div>
+            )}
+            {candles.status === "ok" ? (
+              <CandleChart candles={candles.data.candles} />
+            ) : (
+              <div className="h-full w-full animate-pulse rounded-sm bg-panel2/50" />
+            )}
+          </div>
+          <p className="border-t border-line px-4 py-2.5 font-mono text-[11px] text-dim">
+            RSI · MACD · EMA · Support/Resistance · BUY/SELL signal — дараагийн алхамд нэмэгдэнэ
+          </p>
+        </section>
       </div>
     </main>
   );

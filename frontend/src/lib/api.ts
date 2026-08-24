@@ -19,6 +19,9 @@ const ENV = envSchema.parse({
 
 export const API_BASE_URL: string = ENV.NEXT_PUBLIC_API_BASE_URL;
 
+/** Market data endpoint-үүд /api/forex доор байрладаг (v1 биш) — URL-аас гаргаж авна. */
+export const FOREX_BASE_URL: string = API_BASE_URL.replace(/\/v1\/?$/, "/forex");
+
 /** Бүх API алдааны нэгдсэн класс. */
 export class ApiError extends Error {
   readonly status: number; // HTTP статус; 0 = сүлжээ/timeout
@@ -37,6 +40,8 @@ export interface FetchOptions {
   body?: unknown;
   timeoutMs?: number;
   retries?: number;
+  /** Өөр base URL (жишээ нь FOREX_BASE_URL); үгүй бол API_BASE_URL */
+  base?: string;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -52,14 +57,14 @@ async function toApiError(res: Response): Promise<ApiError> {
 }
 
 export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
-  const { method = "GET", body, timeoutMs = 8000, retries = 2 } = opts;
+  const { method = "GET", body, timeoutMs = 8000, retries = 2, base } = opts;
   let lastError: ApiError = new ApiError("Тодорхойгүй алдаа", 0, "unknown");
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${API_BASE_URL}${path}`, {
+      const res = await fetch(`${base ?? API_BASE_URL}${path}`, {
         method,
         headers: {
           Accept: "application/json",

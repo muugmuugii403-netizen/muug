@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { NAV, NAV1 } from "./data";
+import { NAV, NAV1, STEP2_CURL, STEP2_ENDPOINTS, STEP2_FILES } from "./data";
 import { useScrollSpy } from "./hooks";
+import { Callout, Chip, CodeBlock, MethodBadge, Reveal, SectionHead } from "./components/bits";
 import { TickerTape } from "./components/Header";
 import {
   ContractSection,
@@ -14,7 +15,86 @@ import { ArchitectureSection, FlowSection, FolderSection } from "./components/Ar
 import { ApiSection, DataSection } from "./components/ApiData";
 import { ScoringSection } from "./components/Scoring";
 import { DbSection, Footer, PhasesSection, SecuritySection } from "./components/Schema";
-import { Reveal } from "./components/bits";
+
+/* ================= Step 2 · market data layer ================= */
+
+function MarketDataSection(): ReactNode {
+  return (
+    <section id="s2-layer" className="scroll-mt-28">
+      <SectionHead
+        num="06"
+        kicker="Step 2 · Done"
+        title="Market data layer — Twelve Data"
+        desc="Backend: router → service → provider давхарга бүхий market data систем. 7 pair, зөвхөн 5min/15min, timeout + retry + rate-limit + validation + 20 гаруй тест. Frontend: pair/timeframe сонголт, candlestick chart, амьд quote самбар."
+      />
+      <Reveal>
+        <div className="overflow-x-auto rounded-md border border-line bg-deep/60">
+          <table className="w-full min-w-[620px] text-left">
+            <thead>
+              <tr className="border-b border-line bg-panel">
+                {["Method", "Endpoint", "Статус", "Тайлбар"].map((h) => (
+                  <th key={h} className="px-4 py-2.5 font-mono text-[10.5px] font-medium tracking-[0.15em] text-dim uppercase">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {STEP2_ENDPOINTS.map((e) => (
+                <tr key={e.path} className="transition-colors hover:bg-panel">
+                  <td className="px-4 py-3">
+                    <MethodBadge m={e.method} />
+                  </td>
+                  <td className="px-4 py-3 font-mono text-[12px] text-mist">{e.path}</td>
+                  <td className="px-4 py-3 font-mono text-[11.5px] text-cy">{e.status}</td>
+                  <td className="px-4 py-3 text-[13px] text-fog">{e.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Reveal>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+        <div className="min-w-0">
+          <Reveal>
+            <CodeBlock title="Шалгах команд" lang="bash" code={STEP2_CURL} />
+          </Reveal>
+          <Reveal delay={120}>
+            <div className="mt-5 space-y-4">
+              <Callout tone="cy" title="Rate-limit хамгаалалт">
+                Twelve Data free plan: <b className="text-mist">8 credit/мин · 800/өдөр</b>. Хамгаалалт гурван үе: backend
+                TTL cache (candles 30с, quote 15с) → 429 ирвэл <b className="text-mist">Retry-After</b>-г дээш дамжуулна →
+                frontend auto-refresh 20с. 5xx/сүлжээнд retry ×3 (0.5→1→2с backoff), key лог-д хэзээ ч хэвлэгдэхгүй.
+              </Callout>
+              <Callout tone="wait" title="SAMPLE горим">
+                <b className="text-mist">TWELVE_DATA_API_KEY</b> хоосон үед детерминист sample өгөгдөл ашиглагдана — бүх
+                хариунд <b className="text-mist">source: "sample"</b>, UI-д шар SAMPLE тэмдэг. Бодит key .env-д ороход LIVE
+                горим руу автоматаар шилжинэ. Энэ горим нь Twelve Data docs-д заасан хариуны форматтай ижил.
+              </Callout>
+            </div>
+          </Reveal>
+        </div>
+        <Reveal delay={80}>
+          <div className="overflow-hidden rounded-md border border-line bg-deep/60">
+            <div className="flex items-center justify-between border-b border-line bg-panel px-4 py-2.5">
+              <p className="font-display text-[13px] font-semibold text-mist">Өөрчлөгдсөн файлууд</p>
+              <Chip tone="buy">+10 шинэ · ~7 засвар</Chip>
+            </div>
+            <ul className="max-h-[430px] divide-y divide-line overflow-y-auto">
+              {STEP2_FILES.map((f) => (
+                <li key={f.path} className="group px-4 py-2.5 transition-all duration-200 hover:translate-x-1 hover:bg-panel">
+                  <p className="font-mono text-[12px] font-medium text-buy">{f.path}</p>
+                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-fog">{f.role}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
 
 const IDS: string[] = [...NAV1.map((n) => n.id), ...NAV.map((n) => n.id)];
 
@@ -99,6 +179,7 @@ export default function App(): ReactNode {
             <PkgsSection />
             <ContractSection />
             <NextStepsSection />
+            <MarketDataSection />
 
             {/* ---- Хавсралт: Step 0 blueprint ---- */}
             <Reveal>

@@ -15,17 +15,13 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.schemas.analysis import AnalysisRequest, ErrorResponse, HealthResponse, PairInfo
 from app.services.analysis_service import AnalysisService
+from app.services.market_data.symbols import FOREX_PAIRS
 
 router = APIRouter(tags=["core"])
 
-# Step 1-д static жагсаалт — Step 2-т PostgreSQL-ын `pairs` хүснэгтээс уншина.
-SUPPORTED_PAIRS: tuple[PairInfo, ...] = (
-    PairInfo(symbol="EUR/USD", name="Euro / US Dollar", pip_decimals=5),
-    PairInfo(symbol="GBP/USD", name="British Pound / US Dollar", pip_decimals=5),
-    PairInfo(symbol="USD/JPY", name="US Dollar / Japanese Yen", pip_decimals=3),
-    PairInfo(symbol="USD/CHF", name="US Dollar / Swiss Franc", pip_decimals=5),
-    PairInfo(symbol="AUD/USD", name="Australian Dollar / US Dollar", pip_decimals=5),
-    PairInfo(symbol="USD/CAD", name="US Dollar / Canadian Dollar", pip_decimals=5),
+# Market data registry-ээс уншина (symbols.py — цорын ганц эх сурвалж).
+SUPPORTED_PAIRS: tuple[PairInfo, ...] = tuple(
+    PairInfo(symbol=p.symbol, name=p.name, pip_decimals=p.pip_decimals) for p in FOREX_PAIRS
 )
 
 

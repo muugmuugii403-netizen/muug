@@ -889,7 +889,61 @@ export const NAV1: Step1NavItem[] = [
   { id: "s1-pkgs", num: "03", label: "Package-ууд" },
   { id: "s1-contract", num: "04", label: "API contract" },
   { id: "s1-next", num: "05", label: "Дараагийн алхам" },
+  { id: "s2-layer", num: "06", label: "Market data layer" },
 ];
+
+/* ================================================================
+   STEP 2 · MARKET DATA LAYER (Twelve Data)
+   ================================================================ */
+
+export interface Step2Endpoint {
+  method: "GET";
+  path: string;
+  status: string;
+  note: string;
+}
+
+export const STEP2_ENDPOINTS: Step2Endpoint[] = [
+  {
+    method: "GET",
+    path: "/api/forex/quote/{symbol}",
+    status: "200 · 404 · 429 · 502",
+    note: "price, bid, ask, spread, timestamp, source — bid/ask нь typical spread-ээс синтез",
+  },
+  {
+    method: "GET",
+    path: "/api/forex/candles/{symbol}?interval=…&outputsize=…",
+    status: "200 · 404 · 422 · 429 · 502 · 504",
+    note: "interval: зөвхөн 5min | 15min · outputsize 1–5000 (default 200) · OHLC өсөх эрэмбэтэй",
+  },
+];
+
+export const STEP2_FILES: Array<{ path: string; role: string }> = [
+  { path: "backend/app/services/market_data/symbols.py", role: "7 pair registry + typical spread (цорын ганц эх сурвалж)" },
+  { path: "backend/app/services/market_data/providers.py", role: "TwelveDataProvider: timeout · retry×3 · 429+Retry-After · error-code mapping · SampleDataProvider" },
+  { path: "backend/app/services/market_data/service.py", role: "validation · TTL cache (30с/15с) · эрэмбэлэлт · bid/ask синтез" },
+  { path: "backend/app/api/forex.py", role: "GET /api/forex/quote · /api/forex/candles + DI factory" },
+  { path: "backend/app/schemas/market.py", role: "Interval enum · Candle OHLC sanity validation · хариуны загвар" },
+  { path: "backend/app/core/errors.py", role: "domain алдаа → HTTP код (404/429/502/503/504)" },
+  { path: "backend/tests/test_market.py", role: "20+ тест: parse · retry · 429 · 404 · 422 · OHLC · sample — бүгд детерминист" },
+  { path: "frontend/src/lib/market.ts", role: "typed client: getQuote · getCandles + pair mirror" },
+  { path: "frontend/src/components/CandleChart.tsx", role: "TradingView Lightweight Charts v4 (зөвхөн визуализаци)" },
+  { path: "frontend/src/components/QuotePanel.tsx", role: "price · bid · ask · spread · auto-refresh 20с · LIVE/SAMPLE тэмдэг" },
+];
+
+export const STEP2_CURL = `# quote — сүүлийн үнэ + bid/ask/spread
+curl -s localhost:8000/api/forex/quote/EUR%2FUSD
+# {"symbol":"EUR/USD","price":1.08575,"bid":1.08572,
+#  "ask":1.08578,"spread":0.00006,"source":"twelvedata",...}
+
+# 5min candles ×200
+curl -s "localhost:8000/api/forex/candles/EUR%2FUSD?interval=5min&outputsize=200"
+
+# 15min candles ×200
+curl -s "localhost:8000/api/forex/candles/USD%2FJPY?interval=15min&outputsize=200"
+
+# backend тест (гадаад дуудлагагүй)
+make test`;
 
 export interface SNode {
   n: string;
@@ -1127,8 +1181,8 @@ export interface NextStep {
 
 export const NEXT_STEPS: NextStep[] = [
   { step: "01", title: "Project scaffold", desc: "Бүтэц, API холболт, validation, error handling, README.", eta: "дууссан", status: "done" },
-  { step: "02", title: "Market data adapter", desc: "TwelveDataClient: timeout, retry ×3, yfinance fallback, Redis OHLCV cache · GET /chart/{symbol}/{timeframe}.", eta: "4 өдөр", status: "next" },
-  { step: "03", title: "Indicator layer", desc: "pandas + pandas-ta: EMA 20/50/200, RSI, MACD, ATR, Support/Resistance, price action — цэвэр функц, unit тесттэй.", eta: "4 өдөр", status: "todo" },
+  { step: "02", title: "Market data layer", desc: "Twelve Data /time_series + /quote: timeout, retry ×3 (exp backoff), 429+Retry-After, TTL cache, 7 pair, 5min/15min, sample fallback, 20+ тест.", eta: "дууссан", status: "done" },
+  { step: "03", title: "Indicator layer", desc: "pandas + pandas-ta: EMA 20/50/200, RSI, MACD, ATR, Support/Resistance, price action — цэвэр функц, unit тесттэй.", eta: "4 өдөр", status: "next" },
   { step: "04", title: "Deterministic scoring engine", desc: "7 дүрэм · нийт жин 100 · 3 босго (≥55, зөрүү ≥25, RR ≥1.5) → BUY/SELL/WAIT + Entry/SL/TP/RR + confidence.", eta: "4 өдөр", status: "todo" },
   { step: "05", title: "Qwen тайлбар давхарга", desc: "AI зөвхөн scoring JSON-ийг тайлбарлана; fallback: template тайлбар. Signal-д хэзээ ч хүрэхгүй.", eta: "2 өдөр", status: "todo" },
   { step: "06", title: "UI: chart + signal хуудас", desc: "Lightweight Charts OHLC + EMA/S-R давхарга, multi-timeframe самбар, тайлбарын карт.", eta: "6 өдөр", status: "todo" },

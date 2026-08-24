@@ -1,180 +1,182 @@
-# Forex Analyzer — Deterministic зах зээлийн дүн шинжилгээ
+# Forex Analyzer — Зах зээлийн дүн шинжилгээний систем
 
-> Хэрэглэгч Forex pair (EUR/USD, GBP/USD, USD/JPY…) сонгоход систем OHLCV өгөгдөл авч,
-> 10 техникийн indicator тооцоолж, **deterministic scoring engine**-ээр BUY / SELL / WAIT
-> signal гаргана. **AI (Qwen) зөвхөн тайлбар үүсгэнэ — шийдвэрт хэзээ ч оролцохгүй.**
+Forex pair сонгоход систем market data авч, deterministic scoring engine-ээр
+BUY / SELL / WAIT signal гаргадаг веб систем. AI (Qwen) нь **зөвхөн тайлбар**
+бичих ба шийдвэрт хэзээ ч оролцохгүй.
 
-⚠️ **Анхааруулга:** Энэ систем баталгаатай ашиг амлахгүй. Энэ нь судалгааны хэрэгсэл болохоос
-хөрөнгө оруулалтын зөвлөгөө биш.
+| давхарга | технологи |
+| --- | --- |
+| Frontend | Next.js 15 · React 19 · TypeScript strict · Tailwind 4 · Lightweight Charts |
+| Backend | Python · FastAPI · Pydantic v2 · httpx |
+| Market data | Twelve Data API (`/time_series`, `/quote`) |
+| Тест | pytest (backend) · tsc strict (frontend) |
 
-**Одоогийн байдал: Step 1 (Project scaffold) ✅** — үндсэн бүтэц, frontend↔backend холболт,
-error handling, validation. Market data, AI болон scoring алгоритм дараагийн алхмуудад.
+**Одоогийн байдал:** Step 2 — Market data layer дууссан (5min/15min candles +
+quote, 7 pair, timeout/retry/rate-limit/validation/тест). Indicator болон
+scoring engine дараагийн алхамд нэмэгдэнэ.
 
 ---
 
-## 1. Технологи
-
-| Давхарга   | Технологи                                    |
-| ---------- | ------------------------------------------- |
-| Frontend   | Next.js 15 (App Router) · React 19 · TypeScript strict · Tailwind CSS 4 |
-| Backend    | Python 3.11+ · FastAPI · Pydantic v2 · pydantic-settings |
-| Database   | PostgreSQL 15 (Step 2-оос) · Redis cache    |
-| Chart      | TradingView Lightweight Charts (Step 6)     |
-| Analysis   | pandas + pandas-ta (Step 3)                 |
-| AI         | Qwen API — зөвхөн тайлбар (Step 5)          |
-| Тест/CI    | pytest · ruff · mypy · tsc · GitHub Actions |
-
-## 2. Урьдчилсан шаардлага
-
-- **Node.js 20+**, npm 10+
-- **Python 3.11+**
-- **GNU Make** (Windows дээр WSL эсвэл Git Bash ашиглана уу; эсвэл доорх командуудыг гараар гүйцэтгэ)
-
-## 3. Хурдан эхлэх
-
-```bash
-# 1. Бүх орчинг бэлдэх (venv, pip install, npm install, __init__.py, .env)
-make setup
-
-# 2. Backend ажиллуулах (http://localhost:8000)
-make dev-api
-
-# 3. Өөр terminal дээр frontend ажиллуулах (http://localhost:3000)
-make dev-web
-```
-
-Шалгах:
-
-- Backend Swagger: <http://localhost:8000/docs>
-- Health check: <http://localhost:8000/api/v1/health> → `{"status": "ok", ...}`
-- Frontend: <http://localhost:3000> — хуудас нээгмэгц `/health`-ийг дуудаж холболтын статусыг харуулна.
-
-### Makeгүйгээр (гараар)
-
-```bash
-# Backend
-cd backend
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt      # Windows: .venv\Scripts\pip
-cp .env.example .env                           # шаардлагатай бол утгуудыг өөрчил
-.venv/bin/uvicorn app.main:app --reload --port 8000
-
-# Frontend
-cd frontend
-npm install
-cp .env.example .env.local
-npm run dev
-```
-
-> Тэмдэглэл: `make setup` нь Python package-уудын `__init__.py` файлуудыг автоматаар үүсгэдэг.
-
-## 4. Төслийн бүтэц
+## 1. Бүтэц
 
 ```
 forex-analyzer/
-├── Makefile                          # make setup / dev-api / dev-web / test / lint
+├── Makefile                      # нэгдсэн команд
 ├── README.md
-├── frontend/                         # Next.js 15 — App Router
-│   ├── .env.example                  # NEXT_PUBLIC_API_BASE_URL
-│   ├── next.config.ts
-│   ├── package.json
-│   ├── postcss.config.mjs            # Tailwind CSS v4
-│   ├── tsconfig.json                 # strict: true
+├── frontend/                     # Next.js 15
+│   ├── .env.example              # NEXT_PUBLIC_API_BASE_URL
 │   └── src/
-│       ├── app/
-│       │   ├── globals.css
-│       │   ├── layout.tsx
-│       │   └── page.tsx              # холболтын статус + pair сонголт
-│       ├── components/
-│       │   └── PairSelector.tsx      # zod validation-тай сонгогч
-│       └── lib/
-│           ├── api.ts                # timeout / retry / ApiError
-│           └── types.ts              # API contract төрлүүд
-└── backend/                          # FastAPI
-    ├── .env.example                  # бүх secret эндээс, .env-д
+│       ├── app/page.tsx          # Market Data хуудас
+│       ├── components/           # CandleChart, QuotePanel
+│       └── lib/                  # api.ts (timeout/retry), market.ts (typed client)
+└── backend/                      # FastAPI
+    ├── .env.example              # TWELVE_DATA_API_KEY гэх мэт (commit хийгдэхгүй)
     ├── requirements.txt
     ├── app/
-    │   ├── main.py                   # app factory, CORS, error handlers
-    │   ├── core/config.py            # pydantic-settings (env → typed)
-    │   ├── api/routes.py             # /health · /pairs · /analysis (stub)
-    │   ├── schemas/analysis.py       # Pydantic: request/response/error
-    │   └── services/analysis_service.py  # engine-ийн байр (Step 2+)
-    └── tests/test_health.py          # smoke тестүүд
+    │   ├── main.py               # app factory · CORS · error handler-үүд
+    │   ├── core/                 # config.py (env→typed), errors.py (domain алдаа)
+    │   ├── api/                  # routes.py (/api/v1), forex.py (/api/forex)
+    │   ├── schemas/              # Pydantic: market.py, analysis.py
+    │   └── services/
+    │       ├── analysis_service.py            # engine-ийн байр (Step 3-4)
+    │       └── market_data/                   # ★ Step 2
+    │           ├── symbols.py    # 7 pair registry + typical spread
+    │           ├── providers.py  # TwelveDataProvider, SampleDataProvider
+    │           └── service.py    # validation · TTL cache · bid/ask синтез
+    └── tests/test_market.py      # 20 гаруй тест, гадаад дуудлагагүй
 ```
 
-## 5. Environment хувьсагчид
+Давхаргын хариуцлага: **router** (HTTP contract) → **service** (бизнес логик,
+cache, validation) → **provider** (гадаад API: timeout, retry, error mapping).
 
-**Backend** (`backend/.env` — `.env.example`-аас хуулна):
+## 2. Шаардлагатай зүйлс
 
-| Хувьсагч              | Тодорхойлолт                        | Step 1-д |
-| --------------------- | ----------------------------------- | -------- |
-| `APP_ENV`             | `dev` / `staging` / `prod`          | ✅ ашиглана |
-| `DEBUG`               | log түвшин                          | ✅ |
-| `SECRET_KEY`          | Нууц түлхүүр (prod-д заавал өөрчил) | ✅ validate |
-| `CORS_ORIGINS`        | Зөвшөөрөгдөх origin-ууд (`,`-аар)   | ✅ |
-| `DATABASE_URL`        | PostgreSQL async DSN                | Step 2   |
-| `REDIS_URL`           | Cache                               | Step 2   |
-| `TWELVE_DATA_API_KEY` | Market data (одоохондоо **хоосон**) | Step 2   |
-| `QWEN_API_KEY`        | AI тайлбар (одоохондоо **хоосон**)  | Step 5   |
+- Python 3.11+, Node.js 20+, GNU Make (Windows: WSL/Git Bash)
+- Twelve Data API key (үнэгүй: https://twelvedata.com/account/api-keys) —
+  **заавал биш**: keyгүй үед детерминист *sample* өгөгдлөөр ажиллана
 
-**Frontend** (`frontend/.env.local`):
-
-| Хувьсагч                   | Тодорхойлолт                  |
-| -------------------------- | ----------------------------- |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000/api/v1` |
-
-> 🔒 **Дүрэм:** `NEXT_PUBLIC_` эхлэлтэй хувьсагч client bundle-д орно — API key/secret
-> **хэзээ ч** битгий тавь. Бүх гадаад API дуудлага зөвхөн backend-ээс явна.
-
-## 6. API contract (Step 1)
-
-| Method | Path                 | Хариу        | Тайлбар                                        |
-| ------ | -------------------- | ------------ | ---------------------------------------------- |
-| GET    | `/api/v1/health`     | 200          | Liveness, version, env                          |
-| GET    | `/api/v1/pairs`      | 200          | Дэмжигдэх pair жагсаалт (одоогоор static)       |
-| POST   | `/api/v1/analysis`   | 422 / **501** | Оролтыг validate хийнэ; engine Step 2-т ирнэ    |
-
-Нэгдсэн алдааны формат (бүх endpoint):
-
-```json
-{ "error": "validation_error", "detail": "Буруу оролт: body.symbol", "path": "/api/v1/analysis", "utc_now": "2026-02-14T08:31:12Z" }
-```
-
-## 7. Тест ба шалгуур
+## 3. Ажиллуулах
 
 ```bash
-make test        # pytest smoke тест (health 200, pairs 200, analysis 501, validation 422)
-make lint        # ruff + mypy (backend)
-make typecheck   # tsc --noEmit (frontend)
+make setup      # venv + pip + npm install + .env файлууд
+make dev-api    # backend  → http://localhost:8000  (docs: /docs)
+make dev-web    # frontend → http://localhost:3000
 ```
 
-## 8. Аюулгүй байдлын зарчим
+Гараар (makeгүй):
 
-- API key/secret зөвхөн `.env`-д; `.env` хэзээ ч commit хийгдэхгүй (`.gitignore`)
-- Нууцууд `SecretStr` төрлөөр — log-д хэвлэгдэхгүй
-- `APP_ENV=prod` үед default `SECRET_KEY`-тэй эхлэхийг `config.py` **блоклоно**
-- Бүх оролт Pydantic (backend) + zod (frontend) validation-тай
-- CORS зөвхөн whitelist origin-д
-- Timeout (AbortController/httpx) + retry зөвхөн 5xx/сүлжээний алдаанд
+```bash
+# backend
+cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env        # TWELVE_DATA_API_KEY-ээ оруул
+.venv/bin/uvicorn app.main:app --reload --port 8000
 
-## 9. Хөгжүүлэлтийн зам
+# frontend
+cd frontend && npm install && cp .env.example .env.local && npm run dev
+```
 
-| Алхам  | Агуулга                                    | Статус |
-| ------ | ------------------------------------------ | ------ |
-| Step 1 | Project scaffold, API холболт, validation  | ✅     |
-| Step 2 | Market data adapter (Twelve Data + fallback, cache) | ⏳ |
-| Step 3 | Indicator layer (pandas-ta: EMA/RSI/MACD/ATR/S/R)   | — |
-| Step 4 | Deterministic scoring engine (7 дүрэм, жин 100)     | — |
-| Step 5 | Qwen тайлбар давхарга (explain-only)                | — |
-| Step 6 | UI: Lightweight Charts + signal хуудас              | — |
-| Step 7 | Хатуужуулалт (rate limit, CI, test, Sentry)         | — |
-| Step 8 | Deploy (Docker, Nginx+TLS, prod env)                | — |
+## 4. Environment хувьсагч
 
-## 10. Түгээмэл асуудал
+| хувьсагч | байршил | тайлбар |
+| --- | --- | --- |
+| `TWELVE_DATA_API_KEY` | backend/.env | Provider key — **зөвхөн backend** |
+| `TWELVE_DATA_BASE_URL` | backend/.env | default: `https://api.twelvedata.com` |
+| `SAMPLE_FALLBACK_ENABLED` | backend/.env | key хоосон үед sample горим (default true) |
+| `MARKET_DATA_TIMEOUT_S` | backend/.env | provider timeout (default 8с) |
+| `MARKET_DATA_RETRIES` | backend/.env | retry тоо (default 3, exponential backoff) |
+| `MARKET_DATA_CACHE_CANDLES_S` | backend/.env | candles TTL (default 30с) |
+| `MARKET_DATA_CACHE_QUOTE_S` | backend/.env | quote TTL (default 15с) |
+| `CORS_ORIGINS` | backend/.env | зөвшөөрөгдөх origin-ууд |
+| `NEXT_PUBLIC_API_BASE_URL` | frontend/.env.local | `http://localhost:8000/api/v1` |
 
-| Асуудал                        | Шийдэл                                                            |
-| ------------------------------ | ----------------------------------------------------------------- |
-| Frontend "Сүлжээний алдаа"     | Backend ажиллаж байна уу? `CORS_ORIGINS`-д `http://localhost:3000` бий юу? |
-| `address already in use :8000` | Өөр uvicorn гаргаж: `lsof -i :8000`                               |
-| Windows + `make` алга          | WSL/Git Bash ашигла, эсвэл §3-ын "гараар" командыг гүйцэтгэ       |
-| `ModuleNotFoundError: app`     | `backend/` дотроос ажиллуулж байгаа эсэх, эсвэл `make setup` дахин |
+> **Аюулгүй байдал:** `.env` файл git-д хэзээ ч commit хийгдэхгүй (`.env.example`
+> л орно). API key frontend bundle-д хэзээ ч орохгүй — гадаад дуудлага зөвхөн
+> backend-ээс явна. `NEXT_PUBLIC_*`-д зөвхөн API URL байна.
+
+## 5. Market Data API (Step 2)
+
+Дэмжих pair: `EUR/USD · GBP/USD · USD/JPY · AUD/USD · USD/CAD · USD/CHF · NZD/USD`
+Дэмжих interval: **зөвхөн** `5min`, `15min` · outputsize: 1–5000 (default 200)
+
+### GET /api/forex/quote/{symbol}
+
+```bash
+curl -s localhost:8000/api/forex/quote/EUR%2FUSD
+```
+
+```json
+{
+  "symbol": "EUR/USD",
+  "price": 1.08575,
+  "bid": 1.08572,
+  "ask": 1.08578,
+  "spread": 0.00006,
+  "timestamp": "2026-02-14T08:12:01Z",
+  "source": "twelvedata"
+}
+```
+
+> Twelve Data-ийн Forex quote bid/ask буцаадаггүй тул bid/ask нь mid price дээр
+> pair-ийн typical retail spread-ийг нэмж/хасч тооцогдоно (symbols.py).
+
+### GET /api/forex/candles/{symbol}?interval=5min&outputsize=200
+
+```bash
+curl -s "localhost:8000/api/forex/candles/EUR%2FUSD?interval=5min&outputsize=200"
+curl -s "localhost:8000/api/forex/candles/USD%2FJPY?interval=15min&outputsize=200"
+```
+
+```json
+{
+  "symbol": "EUR/USD",
+  "interval": "5min",
+  "count": 200,
+  "source": "twelvedata",
+  "candles": [
+    { "timestamp": "2026-02-13T12:00:00Z", "open": 1.085, "high": 1.0856, "low": 1.0847, "close": 1.0854 }
+  ]
+}
+```
+
+Лаанууд үргэлж **цагаар өсөх** эрэмбэтэй, OHLC эрүүл байдал нь Pydantic-аар
+шалгагдана (`high ≥ max(o,c)`, `low ≤ min(o,c)`).
+
+### Алдааны код (нэгдсэн формат)
+
+| HTTP | code | учир |
+| --- | --- | --- |
+| 404 | `SYMBOL_NOT_SUPPORTED` | дэмжигдэхгүй pair |
+| 422 | `validation_error` | буруу interval/outputsize |
+| 429 | `MARKET_DATA_RATE_LIMITED` | Twelve Data credit дууссан (+ `Retry-After`) |
+| 502 | `MARKET_DATA_UNAVAILABLE` / `MARKET_DATA_AUTH_ERROR` | provider доошилсон / key буруу |
+| 503 | `MARKET_DATA_NOT_CONFIGURED` | key байхгүй, sample унтраалттай |
+| 504 | `MARKET_DATA_TIMEOUT` | provider timeout (retry-ийн дараа) |
+
+```json
+{ "error": "SYMBOL_NOT_SUPPORTED", "detail": "'BTC/USD' дэмжигдэхгүй…", "path": "/api/forex/quote/BTC%2FUSD", "utc_now": "…" }
+```
+
+## 6. Тест
+
+```bash
+make test        # backend pytest (гадаад дуудлагагүй — MockTransport/DI override)
+make typecheck   # frontend tsc --noEmit
+make lint        # ruff + mypy
+```
+
+`tests/test_market.py`-д: Twelve Data хариуны parse, 500→retry→амжилт,
+429 + Retry-After, буруу symbol/key, timeout, OHLC validation, endpoint
+contract (200/404/422/429/502), sample горим — бүгд детерминист.
+
+## 7. Дараагийн алхамууд
+
+1. ~~Project scaffold~~ ✓
+2. ~~Market data layer (Twelve Data, 5min/15min)~~ ✓
+3. **Indicator layer** — pandas + pandas-ta: EMA 20/50/200, RSI, MACD, ATR, S/R
+4. **Deterministic scoring engine** — 7 дүрэм, нийт жин 100 → BUY/SELL/WAIT + SL/TP/RR
+5. **Qwen тайлбар** — зөвхөн scoring үр дүнг тайлбарлана
+6. UI: chart давхарга (EMA/S-R), multi-timeframe самбар
+7. Хатуужуулалт (rate limit, monitoring, CI) · 8. Deploy
+
+> ⚠ Энэ систем баталгаатай ашиг амлахгүй. Signal нь зөвхөн техникийн дүн
+> шинжилгээний мэдээлэл бөгөөд эцсийн шийдвэр хэрэглэгчийнх.

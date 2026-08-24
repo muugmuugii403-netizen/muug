@@ -51,6 +51,12 @@ class Settings(BaseSettings):
 
     # --- Гадаад сервисүүд (Step 2 / Step 5-д .env-д бөглөнө) ---
     twelve_data_api_key: SecretStr = SecretStr("")
+    twelve_data_base_url: str = "https://api.twelvedata.com"
+    # Key хоосон үед локал dev-д детерминист sample өгөгдөл хэрэглэх эсэх
+    sample_fallback_enabled: bool = True
+    # In-memory TTL cache (credit хэмнэлт: Twelve Data 8 credit/мин)
+    market_data_cache_candles_s: float = Field(default=30.0, ge=0)
+    market_data_cache_quote_s: float = Field(default=15.0, ge=0)
     qwen_api_key: SecretStr = SecretStr("")
     qwen_model: str = "qwen-plus"
     qwen_timeout_s: float = Field(default=20.0, gt=0)
