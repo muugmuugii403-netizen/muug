@@ -116,3 +116,32 @@ export function IcSpark(props: P): ReactNode {
     </>,
   );
 }
+
+export function IcBell(props: P): ReactNode {
+  return base(
+    props,
+    <>
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </>,
+  );
+}
+
+export function IcClose(props: P): ReactNode {
+  return base(
+    props,
+    <>
+      <path d="M18 6L6 18M6 6l12 12" />
+    </>,
+  );
+}
+
+export function IcTelegram(props: P): ReactNode {
+  return base(
+    props,
+    <>
+      <path d="M22 3L2 10.5l6.5 2.5L11 20l3-5.5L20 18l2-15z" />
+      <path d="M8.5 13L18 6" />
+    </>,
+  );
+}

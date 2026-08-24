@@ -64,6 +64,28 @@ class Settings(BaseSettings):
     # Ижил signal-д дахин AI дуудахгүй байх TTL fingerprint cache (секунд)
     qwen_cache_ttl_s: float = Field(default=900.0, ge=0)
 
+    # --- Realtime monitor (Step 7) ---
+    # Байнгын мониторинг асаалттай эсэх (test/dev-д унтрааж болно)
+    monitor_enabled: bool = True
+    # Loop-ийн тик давтамж (секунд) — candle хаагдсан эсэхийг шалгана
+    monitor_tick_s: float = Field(default=5.0, ge=1)
+    # Quote (одоогийн үнэ) poll давтамж — секунд тутам биш, credit хэмнэнэ
+    quote_poll_s: float = Field(default=20.0, ge=5)
+    # Pair хоорондын зай (rate limit-д зөөлөн)
+    monitor_stagger_s: float = Field(default=0.4, ge=0)
+    # Монитор хийх pair-ууд (хоосон = бүх дэмжигдэх pair). Жишээ: "EUR/USD,GBP/USD"
+    monitor_pairs: str = ""
+    # Signal өөрчлөгдөхөд Qwen тайлбар авах эсэх (AI-г tick бүрд дуудахгүй!)
+    ai_on_signal_change: bool = True
+
+    # --- Telegram (Step 7) — server-side ONLY, frontend-д хэзээ ч гарахгүй ---
+    telegram_bot_token: SecretStr = SecretStr("")
+    telegram_chat_id: str = ""
+    telegram_timeout_s: float = Field(default=8.0, gt=0)
+
+    # --- Alert түүх ---
+    alert_history_max: int = Field(default=200, ge=10, le=5000)
+
     # --- Тэсвэртэй байдал ---
     market_data_timeout_s: float = Field(default=8.0, gt=0)
     market_data_retries: int = Field(default=3, ge=0, le=10)

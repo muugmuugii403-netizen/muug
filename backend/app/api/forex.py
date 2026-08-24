@@ -12,6 +12,7 @@ validation явагдана. Аливаа буруу symbol → 404 SYMBOL_NOT_S
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query
@@ -23,7 +24,11 @@ from app.schemas.market import CandlesResponse, Interval, QuoteResponse
 from app.schemas.signal import SignalResponse
 from app.services.ai.explainer import ExplanationService
 from app.services.ai.qwen_client import QwenClient
+from app.services.alerts.store import InMemoryAlertStore
+from app.services.alerts.telegram import TelegramNotifier
 from app.services.analysis.service import AnalysisService
+from app.services.monitor.broadcaster import Broadcaster
+from app.services.monitor.service import MonitorService
 from app.services.market_data.providers import (
     MarketDataProvider,
     RawBar,
@@ -153,6 +158,77 @@ def get_explainer() -> ExplanationService:
     if _explainer is None:
         _explainer = build_explainer(get_settings())
     return _explainer
+
+
+# ============================================================
+# Realtime monitor (Step 7)
+# ============================================================
+
+_monitor: MonitorService | None = None
+
+
+def build_telegram(settings: Settings) -> TelegramNotifier | None:
+    """Telegram notifier — token/chat хоосон бол None (configured=False байдалтай)."""
+    notifier = TelegramNotifier(
+        bot_token=settings.telegram_bot_token.get_secret_value(),
+        chat_id=settings.telegram_chat_id,
+        timeout_s=settings.telegram_timeout_s,
+    )
+    if notifier.configured:
+        logger.info("Telegram notification идэвхжлээ (chat=%s)", settings.telegram_chat_id[:3] + "…")
+    else:
+        logger.warning("Telegram тохируулагдаагүй — browser/SSE alert үргэлжилнэ")
+    return notifier
+
+
+def build_monitor() -> MonitorService:
+    """Мониторингийн бүрэлдэхүүнийг угсарна (process-д нэг instance)."""
+    global _monitor
+    if _monitor is None:
+        settings = get_settings()
+        _monitor = MonitorService(
+            market=get_market_service(),
+            store=InMemoryAlertStore(max_items=settings.alert_history_max),
+            broadcaster=Broadcaster(),
+            settings=settings,
+            explainer=get_explainer(),
+            telegram=build_telegram(settings),
+        )
+    return _monitor
+
+
+def get_monitor() -> MonitorService:
+    """DI factory — stream router үүнийг ашиглана; тестэд override хийгдэнэ."""
+    return build_monitor()
+
+
+async def start_monitor_task() -> None:
+    """Lifespan-аас дуудагдана: monitor loop-ийг background task болгож эхлүүлнэ."""
+    settings = get_settings()
+    if not settings.monitor_enabled:
+        logger.info("Мониторинг унтраалттай (MONITOR_ENABLED=false)")
+        return
+    monitor = build_monitor()
+    _monitor_task = asyncio.create_task(monitor.run(), name="monitor-loop")
+    app_state.monitor_task = _monitor_task
+
+
+class _AppState:
+    monitor_task: asyncio.Task[None] | None = None
+
+
+app_state = _AppState()
+
+
+async def stop_monitor_task() -> None:
+    task = app_state.monitor_task
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    app_state.monitor_task = None
 
 
 @router.get("/signal/{symbol:path}", response_model=SignalResponse)

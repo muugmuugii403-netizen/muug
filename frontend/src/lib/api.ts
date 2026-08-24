@@ -22,6 +22,12 @@ export const API_BASE_URL: string = ENV.NEXT_PUBLIC_API_BASE_URL;
 /** Market data endpoint-үүд /api/forex доор байрладаг (v1 биш) — URL-аас гаргаж авна. */
 export const FOREX_BASE_URL: string = API_BASE_URL.replace(/\/v1\/?$/, "/forex");
 
+/** /api язгуур (v1, forex аль алиныг агуулсан). */
+export const API_ROOT_URL: string = API_BASE_URL.replace(/\/v1\/?$/, "");
+
+/** SSE урсгалын URL — server→client realtime event. */
+export const STREAM_EVENTS_URL: string = `${API_ROOT_URL}/stream/events`;
+
 /** Бүх API алдааны нэгдсэн класс. */
 export class ApiError extends Error {
   readonly status: number; // HTTP статус; 0 = сүлжээ/timeout

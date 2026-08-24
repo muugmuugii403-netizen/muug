@@ -153,3 +153,35 @@ class AiTimeoutError(AiProviderError):
 
     status = 504
     code = "AI_TIMEOUT"
+
+
+# ============================================================
+# Telegram notification алдаанууд — Step 7
+# ============================================================
+
+
+class TelegramError(Exception):
+    """Telegram Bot API-ийн алдааны суурь класс.
+
+    Эдгээр нь ХЭЗЭЭ Ч API хариу руу задардаггүй — зөвхөн сервер талд
+    лог-логдож, alert түүхэнд `telegram_notification_sent=false` гэж
+    тэмдэглэгдэнэ. Monitoring үргэлжилнэ.
+    """
+
+    code: str = "TELEGRAM_ERROR"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class TelegramNotConfiguredError(TelegramError):
+    """Bot token / chat id тохируулагдаагүй."""
+
+    code = "TELEGRAM_NOT_CONFIGURED"
+
+
+class TelegramSendError(TelegramError):
+    """Илгээлт амжилтгүй (timeout, 4xx, 5xx)."""
+
+    code = "TELEGRAM_SEND_ERROR"

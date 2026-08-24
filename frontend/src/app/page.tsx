@@ -19,6 +19,9 @@ import { SignalPanel } from "@/components/SignalPanel";
 import { TfAnalysisCard } from "@/components/TfAnalysisCard";
 import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { ChartSkeleton, SignalSkeleton, TfCardSkeleton } from "@/components/Skeletons";
+import { SignalTicker } from "@/components/monitor/SignalTicker";
+import { AlertsDrawer } from "@/components/alerts/AlertsDrawer";
+import { SettingsModal } from "@/components/alerts/SettingsModal";
 import { ApiError } from "@/lib/api";
 import {
   FOREX_PAIRS,
@@ -29,7 +32,15 @@ import {
   type Interval,
   type QuoteResponse,
 } from "@/lib/market";
-import { getAnalysis, type AnalysisResponse } from "@/lib/analysis";
+import { getAnalysis, type AnalysisResponse, type SignalResponse } from "@/lib/analysis";
+import { ForexEventStream, type AlertEvent } from "@/lib/stream";
+import {
+  getAlertHistory,
+  getServerSettings,
+  loadClientSettings,
+  type ServerAlertSettings,
+} from "@/lib/alerts";
+import { showBrowserNotification } from "@/lib/notifications";
 
 type Loaded<T> = { status: "ok"; payload: T };
 type Loading = { status: "loading" };
@@ -130,6 +141,92 @@ export default function DashboardPage(): ReactNode {
     await Promise.all([loadCandles(symbol, interval), loadQuote(symbol), loadAnalysis(symbol)]);
     setSpin(false);
   }, [symbol, interval, loadCandles, loadQuote, loadAnalysis]);
+
+  /* ---------- realtime (SSE) + alerts (Step 7) ---------- */
+
+  const [signals, setSignals] = useState<Record<string, SignalResponse>>({});
+  const [connected, setConnected] = useState(false);
+  const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [alertsLoading, setAlertsLoading] = useState(true);
+  const [serverSettings, setServerSettings] = useState<ServerAlertSettings | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Хуучирсан closure-оос сэргийлж одоогийн утгуудыг ref-ээр хадгална
+  const symbolRef = useRef(symbol);
+  const signalsRef = useRef(signals);
+  useEffect(() => {
+    symbolRef.current = symbol;
+  }, [symbol]);
+  useEffect(() => {
+    signalsRef.current = signals;
+  }, [signals]);
+
+  const decimalsFor = useCallback((sym: string): number => {
+    return FOREX_PAIRS.find((p) => p.symbol === sym)?.pipDecimals ?? 5;
+  }, []);
+
+  // SSE урсгалыг нэг удаа эхлүүлнэ (mount дээр); EventSource өөрөө reconnect хийнэ
+  useEffect(() => {
+    const stream = new ForexEventStream({
+      onState: setConnected,
+      onSnapshot: (snap) => {
+        setSignals(snap.signals);
+        setAlerts(snap.alerts);
+        setAlertsLoading(false);
+      },
+      onSignal: (s) => {
+        setSignals((prev) => ({ ...prev, [s.symbol]: s }));
+      },
+      onPrice: (p) => {
+        // Зөвхөн сонгогдсон pair-ийн үнийг шууд шинэчилнэ (chart header)
+        if (p.symbol === symbolRef.current) {
+          setQuote({ status: "ok", payload: p });
+          setLastUpdate(new Date());
+        }
+      },
+      onAlert: (a) => {
+        setAlerts((prev) => [a, ...prev.filter((x) => x.id !== a.id)]);
+        // Сонгогдсон pair бол AI тайлбарыг шинэчилнэ (alert нь explanation агуулна)
+        if (a.symbol === symbolRef.current) {
+          setAnalysis((prev) => {
+            const live = signalsRef.current[a.symbol];
+            const baseSignal = live ?? (prev.status === "ok" ? prev.payload.signal : null);
+            if (!baseSignal) return prev; // signal хүлээж аваагүй бол хэвээр
+            return {
+              status: "ok",
+              payload: {
+                signal: baseSignal,
+                explanation: a.explanation,
+                ai_status: a.ai_status,
+                ai_message: a.ai_message,
+              },
+            };
+          });
+        }
+        // Browser мэдэгдэл (клиентийн тохиргоогоор шүүнэ)
+        const cs = loadClientSettings();
+        const want =
+          (a.signal === "BUY" && cs.browser_buy) ||
+          (a.signal === "SELL" && cs.browser_sell) ||
+          (a.signal === "WAIT" && cs.browser_wait);
+        if (cs.browser_enabled && want) showBrowserNotification(a, decimalsFor(a.symbol));
+      },
+    });
+    stream.start();
+    return () => stream.stop();
+  }, [decimalsFor]);
+
+  // Анхны утгууд: alert түүх + server тохиргоо
+  useEffect(() => {
+    void getAlertHistory(50)
+      .then((list) => setAlerts(list))
+      .catch(() => undefined)
+      .finally(() => setAlertsLoading(false));
+    void getServerSettings()
+      .then(setServerSettings)
+      .catch(() => setServerSettings(null));
+  }, []);
 
   /* ---------- утгууд ---------- */
 

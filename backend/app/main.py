@@ -17,8 +17,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.backtest import router as backtest_router
-from app.api.forex import router as forex_router
+from app.api.forex import router as forex_router, start_monitor_task, stop_monitor_task
 from app.api.routes import router
+from app.api.stream import router as stream_router
 from app.core.config import get_settings
 from app.core.errors import AnalysisError, MarketDataError
 from app.schemas.analysis import ErrorResponse
@@ -28,7 +29,7 @@ logger = logging.getLogger("forex_analyzer")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Startup/shutdown: logging тохируулж, амьдралын мөчлөгийг log-лож байна."""
+    """Startup: logging + realtime monitor loop; shutdown: monitor-ийг зогсооно."""
     settings = get_settings()
     logging.basicConfig(
         level=logging.DEBUG if settings.debug else logging.INFO,
@@ -40,7 +41,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         settings.app_env.value,
         settings.api_version,
     )
+    await start_monitor_task()
     yield
+    await stop_monitor_task()
     logger.info("%s зогсож байна", settings.app_name)
 
 
@@ -81,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(router, prefix=f"/api/{settings.api_version}")
     app.include_router(forex_router, prefix="/api")  # /api/forex/quote · /api/forex/candles
     app.include_router(backtest_router, prefix="/api")  # POST /api/backtest
+    app.include_router(stream_router, prefix="/api")  # SSE /api/stream/events · /api/alerts/*
 
     # ---------- Нэгдсэн error handling ----------
 

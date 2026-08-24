@@ -30,6 +30,24 @@ FETCH_5M = 200
 FETCH_15M = 200
 
 
+def candles_to_snapshot(candles: list[Candle], tf: str, min_count: int) -> TfSnapshot:
+    """Лааны жагсаалтаас indicator snapshot тооцно (module-level, backtest/monitor хуваалцана).
+
+    Raises:
+        InsufficientDataError: лаан хүрэлцэхгүй үед.
+    """
+    if len(candles) < min_count:
+        raise InsufficientDataError(
+            f"{tf} timeframe-д хангалтгүй лаан байна: {len(candles)} < {min_count}. "
+            "Шинжилгээ хийх боломжгүй."
+        )
+    df = pd.DataFrame([c.model_dump() for c in candles])[["open", "high", "low", "close"]]
+    try:
+        return compute_snapshot(df)
+    except ValueError as exc:
+        raise InsufficientDataError(str(exc)) from exc
+
+
 @dataclass
 class AnalysisService:
     """Signal engine-ийн orchestrator. MarketDataService-ээс хамаарна."""
@@ -61,13 +79,4 @@ class AnalysisService:
 
     @staticmethod
     def _snapshot(candles: list[Candle], tf: str, min_count: int) -> TfSnapshot:
-        if len(candles) < min_count:
-            raise InsufficientDataError(
-                f"{tf} timeframe-д хангалтгүй лаан байна: {len(candles)} < {min_count}. "
-                "Шинжилгээ хийх боломжгүй."
-            )
-        df = pd.DataFrame([c.model_dump() for c in candles])[["open", "high", "low", "close"]]
-        try:
-            return compute_snapshot(df)
-        except ValueError as exc:
-            raise InsufficientDataError(str(exc)) from exc
+        return candles_to_snapshot(candles, tf, min_count)
