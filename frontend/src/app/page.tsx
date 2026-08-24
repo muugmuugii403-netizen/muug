@@ -7,9 +7,12 @@
  * авах → chart + үнийн самбар. RSI/MACD/EMA/Signal/AI — дараагийн алхамууд.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { AnalysisPanel } from "@/components/AnalysisPanel";
 import { CandleChart } from "@/components/CandleChart";
 import { QuotePanel } from "@/components/QuotePanel";
+import { SignalPanel } from "@/components/SignalPanel";
 import { ApiError } from "@/lib/api";
+import { getAnalysis, type AnalysisResponse } from "@/lib/analysis";
 import {
   FOREX_PAIRS,
   getCandles,
@@ -32,10 +35,13 @@ export default function MarketDataPage(): ReactNode {
   const [candles, setCandles] = useState<Loadable<CandlesResponse>>({ status: "loading" });
   const [quote, setQuote] = useState<Loadable<QuoteResponse>>({ status: "loading" });
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   const pair = FOREX_PAIRS.find((p) => p.symbol === symbol) ?? FOREX_PAIRS[0];
   const candleReq = useRef(0);
   const quoteReq = useRef(0);
+  const analysisReq = useRef(0);
 
   const loadCandles = useCallback(
     async (sym: string, tf: Interval): Promise<void> => {
@@ -62,11 +68,31 @@ export default function MarketDataPage(): ReactNode {
     }
   }, []);
 
+  // Analysis: signal + AI тайлбар (AI-г секунд бүр дуудахгүй — зөвхөн symbol солиход + товчоор)
+  const loadAnalysis = useCallback(async (sym: string): Promise<void> => {
+    const id = ++analysisReq.current;
+    setAnalysisLoading(true);
+    try {
+      const data = await getAnalysis(sym);
+      if (id === analysisReq.current) setAnalysis(data);
+    } catch {
+      // AI/signal алдаа гарсан ч chart хэвийн — analysis-ийг хоосон үлдээнэ
+      if (id === analysisReq.current) setAnalysis(null);
+    } finally {
+      if (id === analysisReq.current) setAnalysisLoading(false);
+    }
+  }, []);
+
   // pair / interval солигдох бүр candles + quote шинэчилнэ
   useEffect(() => {
     void loadCandles(symbol, interval);
     void loadQuote(symbol);
   }, [symbol, interval, loadCandles, loadQuote]);
+
+  // pair солигдох бүр шинжилгээ (signal + AI тайлбар) авна
+  useEffect(() => {
+    void loadAnalysis(symbol);
+  }, [symbol, loadAnalysis]);
 
   // auto-refresh: 20с тутам quote (backend TTL cache credit-ийг хамгаална)
   useEffect(() => {
@@ -199,9 +225,48 @@ export default function MarketDataPage(): ReactNode {
             )}
           </div>
           <p className="border-t border-line px-4 py-2.5 font-mono text-[11px] text-dim">
-            RSI · MACD · EMA · Support/Resistance · BUY/SELL signal — дараагийн алхамд нэмэгдэнэ
+            EMA · RSI · MACD · ATR · Support/Resistance → deterministic signal доор
           </p>
         </section>
+      </div>
+
+      {/* ===== Step 3 + 4: Signal + AI тайлбар ===== */}
+      <div className="mt-10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-cy">Signal Engine + AI</p>
+            <h2 className="font-display mt-0.5 text-lg font-bold text-mist">Дүн шинжилгээ</h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadAnalysis(symbol)}
+            disabled={analysisLoading}
+            className="rounded-sm border border-buy/50 bg-buy/15 px-4 py-2 font-mono text-[12.5px] text-buy transition-colors hover:bg-buy/25 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {analysisLoading ? "Шинжилж байна…" : "↻ Шинжилгээ шинэчлэх"}
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-6 lg:grid-cols-2">
+          {analysis?.signal ? (
+            <SignalPanel signal={analysis.signal} decimals={pair?.pipDecimals ?? 5} />
+          ) : (
+            <section className="flex items-center justify-center rounded-md border border-line bg-panel/60 p-10">
+              <p className="animate-pulse font-mono text-[13px] text-dim">Signal тооцоолж байна…</p>
+            </section>
+          )}
+          <AnalysisPanel
+            analysis={analysis}
+            loading={analysisLoading}
+            signal={analysis?.signal.signal ?? null}
+          />
+        </div>
+
+        <p className="mt-4 rounded-md border border-line bg-panel/40 p-4 text-[12.5px] leading-relaxed text-dim">
+          ⚠ Signal нь зөвхөн technical indicator дээр суурилсан <span className="text-buy">deterministic</span> дүрмээр
+          гарна. AI (Qwen) нь зөвхөн тайлбар бичдэг бөгөөд signal/оноо/үнэд хэзээ ч нөлөөлөхгүй. Энэ систем баталгаатай
+          ашиг амлахгүй.
+        </p>
       </div>
     </main>
   );

@@ -58,8 +58,11 @@ class Settings(BaseSettings):
     market_data_cache_candles_s: float = Field(default=30.0, ge=0)
     market_data_cache_quote_s: float = Field(default=15.0, ge=0)
     qwen_api_key: SecretStr = SecretStr("")
+    qwen_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen-plus"
     qwen_timeout_s: float = Field(default=20.0, gt=0)
+    # Ижил signal-д дахин AI дуудахгүй байх TTL fingerprint cache (секунд)
+    qwen_cache_ttl_s: float = Field(default=900.0, ge=0)
 
     # --- Тэсвэртэй байдал ---
     market_data_timeout_s: float = Field(default=8.0, gt=0)

@@ -74,3 +74,75 @@ class ProviderTimeoutError(MarketDataError):
 
     status = 504
     code = "MARKET_DATA_TIMEOUT"
+
+
+# ============================================================
+# Analysis (signal engine) алдаанууд — Step 3
+# ============================================================
+
+
+class AnalysisError(Exception):
+    """Signal engine-ийн алдааны суурь класс."""
+
+    status: int = 500
+    code: str = "ANALYSIS_ERROR"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class InsufficientDataError(AnalysisError):
+    """Шинжилгээ хийхэд хангалтгүй лаан / өгөгдөл байна."""
+
+    status = 422
+    code = "INSUFFICIENT_DATA"
+
+
+# ============================================================
+# AI (Qwen) алдаанууд — Step 4
+# ============================================================
+
+
+class AiProviderError(Exception):
+    """AI provider-ийн алдааны суурь класс.
+
+    Эдгээр нь client руу 5xx болж задрах БОЛОвч explainer давхарга нь
+    ихэнхдээ эдгээрийг барьж аваад "AI тайлбар боломжгүй" гэж зөөлөн
+    буцаадаг тул signal engine хэвийн ажиллаж үргэлжилнэ.
+    """
+
+    status: int = 502
+    code: str = "AI_PROVIDER_ERROR"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class AiAuthError(AiProviderError):
+    """Qwen API key хүчингүй (401/403)."""
+
+    status = 502
+    code = "AI_AUTH_ERROR"
+
+
+class AiRateLimitedError(AiProviderError):
+    """Qwen API rate limit."""
+
+    status = 502
+    code = "AI_RATE_LIMITED"
+
+
+class AiUnavailableError(AiProviderError):
+    """Qwen 5xx эсвэл сүлжээний алдаа."""
+
+    status = 502
+    code = "AI_UNAVAILABLE"
+
+
+class AiTimeoutError(AiProviderError):
+    """Qwen timeout."""
+
+    status = 504
+    code = "AI_TIMEOUT"

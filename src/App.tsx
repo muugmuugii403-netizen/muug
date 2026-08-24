@@ -15,6 +15,7 @@ import { ArchitectureSection, FlowSection, FolderSection } from "./components/Ar
 import { ApiSection, DataSection } from "./components/ApiData";
 import { ScoringSection } from "./components/Scoring";
 import { DbSection, Footer, PhasesSection, SecuritySection } from "./components/Schema";
+import { EngineSection } from "./components/Engine";
 
 /* ================= Step 2 · market data layer ================= */
 
@@ -180,6 +181,7 @@ export default function App(): ReactNode {
             <ContractSection />
             <NextStepsSection />
             <MarketDataSection />
+            <EngineSection />
 
             {/* ---- Хавсралт: Step 0 blueprint ---- */}
             <Reveal>

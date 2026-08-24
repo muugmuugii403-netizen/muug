@@ -19,7 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.forex import router as forex_router
 from app.api.routes import router
 from app.core.config import get_settings
-from app.core.errors import MarketDataError
+from app.core.errors import AnalysisError, MarketDataError
 from app.schemas.analysis import ErrorResponse
 
 logger = logging.getLogger("forex_analyzer")
@@ -96,6 +96,12 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def on_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         return _error_response(request, "http_error", str(exc.detail), exc.status_code)
+
+    @app.exception_handler(AnalysisError)
+    async def on_analysis_error(request: Request, exc: AnalysisError) -> JSONResponse:
+        """Signal engine алдаа: insufficient data → 422 гэх мэт."""
+        logger.warning("Analysis алдаа [%s] %s: %s", exc.code, request.url.path, exc.message)
+        return _error_response(request, exc.code, exc.message, exc.status)
 
     @app.exception_handler(MarketDataError)
     async def on_market_error(request: Request, exc: MarketDataError) -> JSONResponse:

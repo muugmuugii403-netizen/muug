@@ -890,6 +890,68 @@ export const NAV1: Step1NavItem[] = [
   { id: "s1-contract", num: "04", label: "API contract" },
   { id: "s1-next", num: "05", label: "Дараагийн алхам" },
   { id: "s2-layer", num: "06", label: "Market data layer" },
+  { id: "s34-engine", num: "07", label: "Signal engine + AI" },
+];
+
+/* ================================================================
+   STEP 3+4 · SIGNAL ENGINE + QWEN AI (тайлбар)
+   ================================================================ */
+
+export const STEP34_FLOW: string[] = [
+  "Market Data (5M + 15M candles)",
+  "Technical Indicators — EMA20/50 · RSI14 · MACD(12,26,9) · ATR14 · S/R · Price Action",
+  "Deterministic Scoring Engine — дүрэм бүр тусдаа функц, жин нийлбэр 100",
+  "BUY / SELL / WAIT (buy≥65 ∧ buy>sell → BUY; sell≥65 ∧ sell>buy → SELL; бусад → WAIT)",
+  "Qwen AI — зөвхөн structured signal-ийг Монгол хэлээр тайлбарлана",
+  "Frontend — signal самбар + AI тайлбар",
+];
+
+export const STEP34_WEIGHTS: Array<{ rule: string; weight: number; buy: string; sell: string }> = [
+  { rule: "15M trend", weight: 25, buy: "Bullish → BUY +25", sell: "Bearish → SELL +25" },
+  { rule: "EMA20 vs EMA50 (15M)", weight: 10, buy: "EMA20 > EMA50 → BUY +10", sell: "EMA20 < EMA50 → SELL +10" },
+  { rule: "RSI14 (15M)", weight: 10, buy: "50–70 → BUY +10", sell: "30–50 → SELL +10 (70+/30− оноогүй)" },
+  { rule: "MACD (15M)", weight: 15, buy: "Bullish → BUY +15", sell: "Bearish → SELL +15" },
+  { rule: "Support / Resistance (15M)", weight: 10, buy: "Bullish reaction → BUY +10", sell: "Bearish reaction → SELL +10" },
+  { rule: "5M confirmation", weight: 20, buy: "Bullish → BUY +20", sell: "Bearish → SELL +20" },
+];
+
+export const STEP34_FILES: Array<{ path: string; role: string }> = [
+  { path: "backend/app/services/analysis/indicators.py", role: "EMA · RSI(Wilder) · MACD · ATR · S/R · Price Action — цэвэр pandas" },
+  { path: "backend/app/services/analysis/scoring.py", role: "Дүрэм тус бүрийн evaluation функц + жин + босго 65 + SL/TP(1:2) тооцоо" },
+  { path: "backend/app/services/analysis/service.py", role: "Market data → snapshot → compute_signal orchestrator" },
+  { path: "backend/app/schemas/signal.py", role: "SignalResponse: score, confidence, entry/SL/TP, 5m/15m, reasons" },
+  { path: "backend/app/services/ai/qwen_client.py", role: "DashScope OpenAI-compatible client: timeout, retry, rate limit" },
+  { path: "backend/app/services/ai/prompt.py", role: "System prompt + AI аюулгүй байдлын хатуу дүрмүүд + structured input" },
+  { path: "backend/app/services/ai/explainer.py", role: "TTL cache · Pydantic validation · tampering шалгалт · зөөлөн fallback" },
+  { path: "backend/app/schemas/ai.py", role: "AiExplanation (зөвхөн текст) + AnalysisResponse (signal + тайлбар)" },
+  { path: "backend/app/api/forex.py", role: "GET /signal/{symbol} · GET /analysis/{symbol} + DI" },
+  { path: "frontend/src/components/SignalPanel.tsx", role: "🟢BUY/🔴SELL/🟡WAIT + оноо + entry/SL/TP + 5M/15M + reasons" },
+  { path: "frontend/src/components/AnalysisPanel.tsx", role: "Qwen Монгол тайлбар + эрсдэл + AIгүй үеийн fallback" },
+];
+
+export const STEP34_AI_RULES: string[] = [
+  "Signal-ийг өөрчлөхгүй (BUY↔SELL, WAIT-ыг худалдаа болгохгүй)",
+  "Өгөгдөлд байхгүй үнэ, indicator, мэдээ зохиохгүй",
+  "Confidence score, оноо зохиохгүй — өгөгдсөн тоог л ашиглана",
+  "Entry / SL / TP утгыг өөрчлөхгүй, зөвхөн үндэслэлийг тайлбарлана",
+  "Signal engine-ийн output-ийг authoritative гэж үзнэ",
+  "Баталгаатай ашиг амлахгүй, эрсдэлийг тодорхой дурдана",
+  "Зөвхөн Монгол хэлээр, энгийн ойлгомжтой хэллэгээр хариулна",
+];
+
+export const STEP34_ENDPOINTS: Array<{ method: "GET"; path: string; status: string; note: string }> = [
+  {
+    method: "GET",
+    path: "/api/forex/signal/{symbol}",
+    status: "200 · 422 · 502",
+    note: "Зөвхөн deterministic signal (Step 3) — AI оролцохгүй",
+  },
+  {
+    method: "GET",
+    path: "/api/forex/analysis/{symbol}",
+    status: "200 · 422 · 502",
+    note: "Signal + Монгол AI тайлбар (Step 4). AI унасан ч signal хэвээр (ai_status=unavailable)",
+  },
 ];
 
 /* ================================================================
@@ -1182,10 +1244,10 @@ export interface NextStep {
 export const NEXT_STEPS: NextStep[] = [
   { step: "01", title: "Project scaffold", desc: "Бүтэц, API холболт, validation, error handling, README.", eta: "дууссан", status: "done" },
   { step: "02", title: "Market data layer", desc: "Twelve Data /time_series + /quote: timeout, retry ×3 (exp backoff), 429+Retry-After, TTL cache, 7 pair, 5min/15min, sample fallback, 20+ тест.", eta: "дууссан", status: "done" },
-  { step: "03", title: "Indicator layer", desc: "pandas + pandas-ta: EMA 20/50/200, RSI, MACD, ATR, Support/Resistance, price action — цэвэр функц, unit тесттэй.", eta: "4 өдөр", status: "next" },
-  { step: "04", title: "Deterministic scoring engine", desc: "7 дүрэм · нийт жин 100 · 3 босго (≥55, зөрүү ≥25, RR ≥1.5) → BUY/SELL/WAIT + Entry/SL/TP/RR + confidence.", eta: "4 өдөр", status: "todo" },
-  { step: "05", title: "Qwen тайлбар давхарга", desc: "AI зөвхөн scoring JSON-ийг тайлбарлана; fallback: template тайлбар. Signal-д хэзээ ч хүрэхгүй.", eta: "2 өдөр", status: "todo" },
-  { step: "06", title: "UI: chart + signal хуудас", desc: "Lightweight Charts OHLC + EMA/S-R давхарга, multi-timeframe самбар, тайлбарын карт.", eta: "6 өдөр", status: "todo" },
+  { step: "03", title: "Indicator layer", desc: "pandas цэвэр функц: EMA20/50, RSI14(Wilder), MACD(12,26,9), ATR14, Support/Resistance, Price Action — unit тесттэй.", eta: "дууссан", status: "done" },
+  { step: "04", title: "Deterministic scoring engine", desc: "6 дүрэм · жин нийлбэр 100 · босго 65 → BUY/SELL/WAIT + Entry/SL/TP(RR 1:2) + confidence. 5M+15M зөрчил → WAIT.", eta: "дууссан", status: "done" },
+  { step: "05", title: "Qwen тайлбар давхарга", desc: "AI зөвхөн structured signal-ийг Монгол хэлээр тайлбарлана; TTL cache + tampering validation + fallback. Signal-д хэзээ ч хүрэхгүй.", eta: "дууссан", status: "done" },
+  { step: "06", title: "UI: chart + signal хуудас", desc: "Lightweight Charts OHLC + signal самбар + AI тайлбарын карт. Үндсэн UI бэлэн — нарийвчлал сайжруулалт үлдсэн.", eta: "дараагийн", status: "next" },
   { step: "07", title: "Хатуужуулалт", desc: "Rate limit, load тест, Sentry, GitHub Actions CI, DB partition + backup.", eta: "5 өдөр", status: "todo" },
   { step: "08", title: "Deploy", desc: "Docker compose → VPS; Nginx + TLS; env-based prod build; monitoring.", eta: "4 өдөр", status: "todo" },
 ];

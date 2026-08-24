@@ -18,7 +18,12 @@ from fastapi import APIRouter, Depends, Query
 
 from app.core.config import Settings, get_settings
 from app.core.errors import MarketDataNotConfiguredError
+from app.schemas.ai import AnalysisResponse
 from app.schemas.market import CandlesResponse, Interval, QuoteResponse
+from app.schemas.signal import SignalResponse
+from app.services.ai.explainer import ExplanationService
+from app.services.ai.qwen_client import QwenClient
+from app.services.analysis.service import AnalysisService
 from app.services.market_data.providers import (
     MarketDataProvider,
     RawBar,
@@ -107,3 +112,69 @@ async def get_candles(
 ) -> CandlesResponse:
     """OHLC лаанууд — цагаар өсөх эрэмбэтэй, `count` ширхэг."""
     return await service.get_candles(symbol.strip().upper(), interval, outputsize)
+
+
+# ============================================================
+# Analysis / Signal (Step 3 + Step 4)
+# ============================================================
+
+_analysis_service: AnalysisService | None = None
+_explainer: ExplanationService | None = None
+
+
+def get_analysis_service() -> AnalysisService:
+    """DI factory — signal engine. Тестэд dependency_overrides-оор солигдоно."""
+    global _analysis_service
+    if _analysis_service is None:
+        _analysis_service = AnalysisService(market=get_market_service())
+    return _analysis_service
+
+
+def build_explainer(settings: Settings) -> ExplanationService:
+    """Qwen key-ээс хамаарч AI client үүсгэнэ; key хоосон бол client=None (disabled)."""
+    api_key = settings.qwen_api_key.get_secret_value()
+    client: QwenClient | None = None
+    if api_key:
+        client = QwenClient(
+            api_key=api_key,
+            base_url=settings.qwen_base_url,
+            model=settings.qwen_model,
+            timeout_s=settings.qwen_timeout_s,
+        )
+        logger.info("AI explainer: Qwen (%s) идэвхжлээ", settings.qwen_model)
+    else:
+        logger.warning("QWEN_API_KEY хоосон — AI тайлбар идэвхжээгүй (signal engine хэвийн)")
+    return ExplanationService(client=client, cache_ttl_s=settings.qwen_cache_ttl_s)
+
+
+def get_explainer() -> ExplanationService:
+    """DI factory — AI тайлбар (алдаанд унадаггүй, signal-д нөлөөлөхгүй)."""
+    global _explainer
+    if _explainer is None:
+        _explainer = build_explainer(get_settings())
+    return _explainer
+
+
+@router.get("/signal/{symbol:path}", response_model=SignalResponse)
+async def get_signal(
+    symbol: str,
+    service: AnalysisService = Depends(get_analysis_service),
+) -> SignalResponse:
+    """Deterministic signal (Step 3): 5M + 15M дээр BUY/SELL/WAIT + оноо + SL/TP."""
+    return await service.compute_signal(symbol.strip().upper())
+
+
+@router.get("/analysis/{symbol:path}", response_model=AnalysisResponse)
+async def get_analysis(
+    symbol: str,
+    service: AnalysisService = Depends(get_analysis_service),
+    explainer: ExplanationService = Depends(get_explainer),
+) -> AnalysisResponse:
+    """Signal (Step 3) + Монгол хэл дээрх AI тайлбар (Step 4).
+
+    Дараалал: market data → indicators → deterministic signal → Qwen тайлбар.
+    AI алдаатай байсан ч signal хэвээрээ буцана (ai_status=unavailable).
+    """
+    signal = await service.compute_signal(symbol.strip().upper())
+    explanation, ai_status, ai_message = await explainer.explain(signal)
+    return AnalysisResponse(signal=signal, explanation=explanation, ai_status=ai_status, ai_message=ai_message)
