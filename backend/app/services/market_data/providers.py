@@ -88,9 +88,18 @@ class MarketDataProvider(Protocol):
 
 
 def _parse_utc(value: str) -> datetime:
-    """'2026-02-14 08:30:00' (Twelve Data, timezone=UTC) → aware datetime."""
-    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-
+    value = str(value).strip()
+    formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ"]
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(value, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    logger.warning(f"Time parse failed: {value}, using current time")
+    return datetime.now(timezone.utc)
 
 def _to_float(raw: Any, field: str) -> float:
     try:
