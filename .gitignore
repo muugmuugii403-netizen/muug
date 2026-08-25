@@ -1,5 +1,34 @@
+# ---- Нууцууд — ХЭЗЭЭ Ч commit хийгдэхгүй (Step 8 security) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Node / Next.js ----
 node_modules/
 .next/
+out/
 dist/
 build/
+.turbo/
+npm-debug.log*
+
+# ---- Python / FastAPI ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+.DS_Store
+
+# ---- Лог ----
 *.log

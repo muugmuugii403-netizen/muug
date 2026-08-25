@@ -22,6 +22,7 @@ from app.core.errors import MarketDataNotConfiguredError
 from app.schemas.ai import AnalysisResponse
 from app.schemas.market import CandlesResponse, Interval, QuoteResponse
 from app.schemas.signal import SignalResponse
+from app.core.rate_limit import Group, rate_limit
 from app.services.ai.explainer import ExplanationService
 from app.services.ai.qwen_client import QwenClient
 from app.services.alerts.store import InMemoryAlertStore
@@ -102,13 +103,13 @@ def get_market_service() -> MarketDataService:
     return _service
 
 
-@router.get("/quote/{symbol:path}", response_model=QuoteResponse)
+@router.get("/quote/{symbol:path}", response_model=QuoteResponse, dependencies=[Depends(rate_limit(Group.FOREX))])
 async def get_quote(symbol: str, service: MarketDataService = Depends(get_market_service)) -> QuoteResponse:
     """Сүүлийн үнэ + bid/ask/spread (spread нь pair-ийн typical spread-ээс синтез)."""
     return await service.get_quote(symbol.strip().upper())
 
 
-@router.get("/candles/{symbol:path}", response_model=CandlesResponse)
+@router.get("/candles/{symbol:path}", response_model=CandlesResponse, dependencies=[Depends(rate_limit(Group.FOREX))])
 async def get_candles(
     symbol: str,
     interval: Interval = Interval.M5,
@@ -231,7 +232,7 @@ async def stop_monitor_task() -> None:
     app_state.monitor_task = None
 
 
-@router.get("/signal/{symbol:path}", response_model=SignalResponse)
+@router.get("/signal/{symbol:path}", response_model=SignalResponse, dependencies=[Depends(rate_limit(Group.ANALYSIS))])
 async def get_signal(
     symbol: str,
     service: AnalysisService = Depends(get_analysis_service),
@@ -240,7 +241,7 @@ async def get_signal(
     return await service.compute_signal(symbol.strip().upper())
 
 
-@router.get("/analysis/{symbol:path}", response_model=AnalysisResponse)
+@router.get("/analysis/{symbol:path}", response_model=AnalysisResponse, dependencies=[Depends(rate_limit(Group.ANALYSIS))])
 async def get_analysis(
     symbol: str,
     service: AnalysisService = Depends(get_analysis_service),

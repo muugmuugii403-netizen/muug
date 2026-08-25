@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends
 
 from app.api.forex import get_market_service
+from app.core.rate_limit import Group, rate_limit
 from app.schemas.backtest import BacktestRequest, BacktestResponse
 from app.services.backtest.service import BacktestService
 from app.services.market_data.service import MarketDataService
@@ -31,7 +32,7 @@ def get_backtest_service() -> BacktestService:
     return _service
 
 
-@router.post("", response_model=BacktestResponse)
+@router.post("", response_model=BacktestResponse, dependencies=[Depends(rate_limit(Group.BACKTEST))])
 async def run_backtest(
     req: BacktestRequest,
     service: BacktestService = Depends(get_backtest_service),

@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     # --- Alert түүх ---
     alert_history_max: int = Field(default=200, ge=10, le=5000)
 
+    # --- Rate limiting (Step 8) — IP + групп бүрт, минутанд ---
+    rate_limit_enabled: bool = True
+    rate_limit_forex_per_min: int = Field(default=120, ge=1)
+    rate_limit_analysis_per_min: int = Field(default=60, ge=1)
+    rate_limit_backtest_per_min: int = Field(default=10, ge=1)
+    rate_limit_alerts_per_min: int = Field(default=60, ge=1)
+
     # --- Тэсвэртэй байдал ---
     market_data_timeout_s: float = Field(default=8.0, gt=0)
     market_data_retries: int = Field(default=3, ge=0, le=10)
@@ -103,9 +110,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _enforce_prod_secrets(self) -> Settings:
-        """Production-д default secret-тэй эхлэхийг хатуу блоклож validate хийнэ."""
+        """Production-д default secret + сул CORS-той эхлэхийг хатуу блоклож validate хийнэ."""
         if self.app_env is AppEnv.PROD and self.secret_key.get_secret_value() == _DEFAULT_SECRET:
             raise ValueError("APP_ENV=prod үед SECRET_KEY-г заавал солих ёстой")
+        if self.app_env is AppEnv.PROD:
+            origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+            if not origins or "*" in origins:
+                raise ValueError(
+                    "APP_ENV=prod үед CORS_ORIGINS-д бодит frontend domain заавал заах ёстой ('*' хориотой)"
+                )
         return self
 
     @property

@@ -1,182 +1,129 @@
-# Forex Analyzer — Зах зээлийн дүн шинжилгээний систем
+# Forex AI Analyzer
 
-Forex pair сонгоход систем market data авч, deterministic scoring engine-ээр
-BUY / SELL / WAIT signal гаргадаг веб систем. AI (Qwen) нь **зөвхөн тайлбар**
-бичих ба шийдвэрт хэзээ ч оролцохгүй.
+Forex зах зээлийн дүн шинжилгээний систем: **5M/15M** candle дээр ажиллах
+**deterministic signal engine** (BUY / SELL / WAIT), realtime мониторинг,
+alert систем (browser + Telegram), backtesting, Qwen AI тайлбар.
 
-| давхарга | технологи |
-| --- | --- |
-| Frontend | Next.js 15 · React 19 · TypeScript strict · Tailwind 4 · Lightweight Charts |
-| Backend | Python · FastAPI · Pydantic v2 · httpx |
-| Market data | Twelve Data API (`/time_series`, `/quote`) |
-| Тест | pytest (backend) · tsc strict (frontend) |
+> ⚠ **Зарчим**: BUY/SELL шийдвэрийг ЗӨВХӨН deterministic engine гаргана
+> (market data → indicator → онооны дүрэм). Qwen AI signal-д хэзээ ч
+> нөлөөлөхгүй — зөвхөн бэлэн үр дүнг монгол хэлээр тайлбарлана.
+> Систем баталгаатай ашиг амлахгүй.
 
-**Одоогийн байдал:** Step 2 — Market data layer дууссан (5min/15min candles +
-quote, 7 pair, timeout/retry/rate-limit/validation/тест). Indicator болон
-scoring engine дараагийн алхамд нэмэгдэнэ.
-
----
-
-## 1. Бүтэц
+## Архитектур
 
 ```
-forex-analyzer/
-├── Makefile                      # нэгдсэн команд
-├── README.md
-├── frontend/                     # Next.js 15
-│   ├── .env.example              # NEXT_PUBLIC_API_BASE_URL
-│   └── src/
-│       ├── app/page.tsx          # Market Data хуудас
-│       ├── components/           # CandleChart, QuotePanel
-│       └── lib/                  # api.ts (timeout/retry), market.ts (typed client)
-└── backend/                      # FastAPI
-    ├── .env.example              # TWELVE_DATA_API_KEY гэх мэт (commit хийгдэхгүй)
-    ├── requirements.txt
-    ├── app/
-    │   ├── main.py               # app factory · CORS · error handler-үүд
-    │   ├── core/                 # config.py (env→typed), errors.py (domain алдаа)
-    │   ├── api/                  # routes.py (/api/v1), forex.py (/api/forex)
-    │   ├── schemas/              # Pydantic: market.py, analysis.py
-    │   └── services/
-    │       ├── analysis_service.py            # engine-ийн байр (Step 3-4)
-    │       └── market_data/                   # ★ Step 2
-    │           ├── symbols.py    # 7 pair registry + typical spread
-    │           ├── providers.py  # TwelveDataProvider, SampleDataProvider
-    │           └── service.py    # validation · TTL cache · bid/ask синтез
-    └── tests/test_market.py      # 20 гаруй тест, гадаад дуудлагагүй
+Forex API (Twelve Data)
+   ↓  timeout · retry · rate-limit handling · TTL cache
+FastAPI (backend)
+   ↓  5M/15M candle-close илрүүлэлт (look-ahead bias үгүй)
+Technical Indicators (pandas: EMA20/50, RSI14, MACD 12/26/9, ATR14, S/R)
+   ↓
+Deterministic Signal Engine (6 дүрэм · жин 100 · босго 65)
+   ↓  BUY / SELL / WAIT + Entry/SL/TP (ATR × 1.5, RR 1:2)
+   ├→ Dashboard (SSE realtime)      ├→ Browser notification
+   ├→ Telegram Bot (server-side)    └→ Qwen тайлбар (зөвхөн signal өөрчлөгдөхөд)
+   └→ Backtest (түүхэн өгөгдөл, ижил engine)
 ```
 
-Давхаргын хариуцлага: **router** (HTTP contract) → **service** (бизнес логик,
-cache, validation) → **provider** (гадаад API: timeout, retry, error mapping).
+**Давхаргууд** (backend): `api/` → `services/` → `schemas/` (Pydantic) —
+market data (`services/market_data/`), analysis (`services/analysis/`),
+AI (`services/ai/`), alerts (`services/alerts/`), monitor (`services/monitor/`),
+backtest (`services/backtest/`).
 
-## 2. Шаардлагатай зүйлс
+## Шаардлага
 
-- Python 3.11+, Node.js 20+, GNU Make (Windows: WSL/Git Bash)
-- Twelve Data API key (үнэгүй: https://twelvedata.com/account/api-keys) —
-  **заавал биш**: keyгүй үед детерминист *sample* өгөгдлөөр ажиллана
+- Node.js ≥ 20 · Python ≥ 3.11 · (сонголттой) PostgreSQL 15, Redis
 
-## 3. Ажиллуулах
+## Шуурхай эхлэл
 
 ```bash
-make setup      # venv + pip + npm install + .env файлууд
-make dev-api    # backend  → http://localhost:8000  (docs: /docs)
+make setup      # venv + pip + npm install + .env файлууд (хоосон загвараас)
+make dev-api    # backend  → http://localhost:8000/docs
 make dev-web    # frontend → http://localhost:3000
 ```
 
-Гараар (makeгүй):
+Гараар:
 
 ```bash
-# backend
-cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env        # TWELVE_DATA_API_KEY-ээ оруул
+# Backend
+cd backend
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cp .env.example .env          # дараа нь API key-үүдээ оруулна
 .venv/bin/uvicorn app.main:app --reload --port 8000
 
-# frontend
-cd frontend && npm install && cp .env.example .env.local && npm run dev
+# Frontend
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
 ```
 
-## 4. Environment хувьсагч
+## Environment хувьсагчид (`backend/.env`)
 
-| хувьсагч | байршил | тайлбар |
-| --- | --- | --- |
-| `TWELVE_DATA_API_KEY` | backend/.env | Provider key — **зөвхөн backend** |
-| `TWELVE_DATA_BASE_URL` | backend/.env | default: `https://api.twelvedata.com` |
-| `SAMPLE_FALLBACK_ENABLED` | backend/.env | key хоосон үед sample горим (default true) |
-| `MARKET_DATA_TIMEOUT_S` | backend/.env | provider timeout (default 8с) |
-| `MARKET_DATA_RETRIES` | backend/.env | retry тоо (default 3, exponential backoff) |
-| `MARKET_DATA_CACHE_CANDLES_S` | backend/.env | candles TTL (default 30с) |
-| `MARKET_DATA_CACHE_QUOTE_S` | backend/.env | quote TTL (default 15с) |
-| `CORS_ORIGINS` | backend/.env | зөвшөөрөгдөх origin-ууд |
-| `NEXT_PUBLIC_API_BASE_URL` | frontend/.env.local | `http://localhost:8000/api/v1` |
+| Хувьсагч | Заавал? | Тайлбар |
+|---|---|---|
+| `TWELVE_DATA_API_KEY` | Үгүй | Хоосон бол детерминист **sample** өгөгдөл (dev) |
+| `QWEN_API_KEY` | Үгүй | Хоосон бол AI тайлбар унтраалттай, signal хэвийн |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Үгүй | Alert илгээлт; алдаа нь системийг зогсоохгүй |
+| `CORS_ORIGINS` | Тийм | Prod-д зөвхөн бодит domain (`*` блоклогдоно) |
+| `SECRET_KEY` | Тийм (prod) | Prod-д default утгыг config блоклож validate хийнэ |
+| `MONITOR_PAIRS` | Үгүй | Хоосон = бүх 7 pair; `"EUR/USD,GBP/USD"` гэж хязгаарлаж болно |
+| `RATE_LIMIT_*` | Үгүй | Групп тус бүрийн минутын хязгаар (IP бүрт) |
 
-> **Аюулгүй байдал:** `.env` файл git-д хэзээ ч commit хийгдэхгүй (`.env.example`
-> л орно). API key frontend bundle-д хэзээ ч орохгүй — гадаад дуудлага зөвхөн
-> backend-ээс явна. `NEXT_PUBLIC_*`-д зөвхөн API URL байна.
+**Нууцууд зөвхөн backend-ийн `.env`-д** хадгалагдана. Frontend-ээс зөвхөн
+`NEXT_PUBLIC_API_BASE_URL` (нууц биш) ашиглагдана. `.env` файлууд
+`.gitignore`-д бүртгэлтэй — GitHub-д хэзээ ч орохгүй.
 
-## 5. Market Data API (Step 2)
+## API
 
-Дэмжих pair: `EUR/USD · GBP/USD · USD/JPY · AUD/USD · USD/CAD · USD/CHF · NZD/USD`
-Дэмжих interval: **зөвхөн** `5min`, `15min` · outputsize: 1–5000 (default 200)
+| Endpoint | Тайлбар |
+|---|---|
+| `GET /api/v1/health` · `/health/detailed` | Liveness / readiness (нууцгүй) |
+| `GET /api/forex/quote/{symbol}` | Үнэ, bid, ask, spread |
+| `GET /api/forex/candles/{symbol}?interval=5min\|15min&outputsize=200` | OHLC |
+| `GET /api/forex/signal/{symbol}` | Deterministic signal + оноо + SL/TP |
+| `GET /api/forex/analysis/{symbol}` | Signal + Qwen тайлбар (монгол) |
+| `GET /api/stream/events` | SSE: price / signal / alert / status |
+| `GET · POST /api/alerts/settings` | Alert тохиргоо |
+| `GET /api/alerts/history` | Alert түүх |
+| `POST /api/backtest` | Түүхэн backtest (ижил engine, AI үгүй) |
 
-### GET /api/forex/quote/{symbol}
+## Тест ба шалгалт
 
 ```bash
-curl -s localhost:8000/api/forex/quote/EUR%2FUSD
-```
-
-```json
-{
-  "symbol": "EUR/USD",
-  "price": 1.08575,
-  "bid": 1.08572,
-  "ask": 1.08578,
-  "spread": 0.00006,
-  "timestamp": "2026-02-14T08:12:01Z",
-  "source": "twelvedata"
-}
-```
-
-> Twelve Data-ийн Forex quote bid/ask буцаадаггүй тул bid/ask нь mid price дээр
-> pair-ийн typical retail spread-ийг нэмж/хасч тооцогдоно (symbols.py).
-
-### GET /api/forex/candles/{symbol}?interval=5min&outputsize=200
-
-```bash
-curl -s "localhost:8000/api/forex/candles/EUR%2FUSD?interval=5min&outputsize=200"
-curl -s "localhost:8000/api/forex/candles/USD%2FJPY?interval=15min&outputsize=200"
-```
-
-```json
-{
-  "symbol": "EUR/USD",
-  "interval": "5min",
-  "count": 200,
-  "source": "twelvedata",
-  "candles": [
-    { "timestamp": "2026-02-13T12:00:00Z", "open": 1.085, "high": 1.0856, "low": 1.0847, "close": 1.0854 }
-  ]
-}
-```
-
-Лаанууд үргэлж **цагаар өсөх** эрэмбэтэй, OHLC эрүүл байдал нь Pydantic-аар
-шалгагдана (`high ≥ max(o,c)`, `low ≤ min(o,c)`).
-
-### Алдааны код (нэгдсэн формат)
-
-| HTTP | code | учир |
-| --- | --- | --- |
-| 404 | `SYMBOL_NOT_SUPPORTED` | дэмжигдэхгүй pair |
-| 422 | `validation_error` | буруу interval/outputsize |
-| 429 | `MARKET_DATA_RATE_LIMITED` | Twelve Data credit дууссан (+ `Retry-After`) |
-| 502 | `MARKET_DATA_UNAVAILABLE` / `MARKET_DATA_AUTH_ERROR` | provider доошилсон / key буруу |
-| 503 | `MARKET_DATA_NOT_CONFIGURED` | key байхгүй, sample унтраалттай |
-| 504 | `MARKET_DATA_TIMEOUT` | provider timeout (retry-ийн дараа) |
-
-```json
-{ "error": "SYMBOL_NOT_SUPPORTED", "detail": "'BTC/USD' дэмжигдэхгүй…", "path": "/api/forex/quote/BTC%2FUSD", "utc_now": "…" }
-```
-
-## 6. Тест
-
-```bash
-make test        # backend pytest (гадаад дуудлагагүй — MockTransport/DI override)
-make typecheck   # frontend tsc --noEmit
+make test        # backend pytest (unit + API + security тестүүд)
 make lint        # ruff + mypy
+make typecheck   # frontend tsc --noEmit
+cd frontend && npm run build   # production build
 ```
 
-`tests/test_market.py`-д: Twelve Data хариуны parse, 500→retry→амжилт,
-429 + Retry-After, буруу symbol/key, timeout, OHLC validation, endpoint
-contract (200/404/422/429/502), sample горим — бүгд детерминист.
+Тестүүд гадны API дуудлага хийхгүй (HTTP mock + sample provider) тул
+`TWELVE_DATA_API_KEY`гүйгээр бүгд ажиллана.
 
-## 7. Дараагийн алхамууд
+## Production
 
-1. ~~Project scaffold~~ ✓
-2. ~~Market data layer (Twelve Data, 5min/15min)~~ ✓
-3. **Indicator layer** — pandas + pandas-ta: EMA 20/50/200, RSI, MACD, ATR, S/R
-4. **Deterministic scoring engine** — 7 дүрэм, нийт жин 100 → BUY/SELL/WAIT + SL/TP/RR
-5. **Qwen тайлбар** — зөвхөн scoring үр дүнг тайлбарлана
-6. UI: chart давхарга (EMA/S-R), multi-timeframe самбар
-7. Хатуужуулалт (rate limit, monitoring, CI) · 8. Deploy
+1. `APP_ENV=prod` — default `SECRET_KEY` болон wildcard/хоосон CORS блоклогдоно
+2. `CORS_ORIGINS=https://your-frontend.domain` — зөвхөн бодит domain
+3. Бүх API key-г `.env`-д (CI/CD secret store-оос тархана)
+4. Reverse proxy (nginx): TLS, `X-Accel-Buffering: no` SSE-д хэдийнэ тохируулсан
+5. `MONITOR_STAGGER_S` / `QUOTE_POLL_S`-аар provider credit-ээ хэмнэнэ
+6. DB хэрэгтэй бол `psql $DATABASE_URL -f database/migrations/001_init.sql`
+   (symbol+timestamp+signal index-үүд бэлэн)
 
-> ⚠ Энэ систем баталгаатай ашиг амлахгүй. Signal нь зөвхөн техникийн дүн
-> шинжилгээний мэдээлэл бөгөөд эцсийн шийдвэр хэрэглэгчийнх.
+## Аюулгүй байдал (Step 8 audit)
+
+- ✅ Secret scan: hardcoded key/token үгүй; `.env` git-д орохгүй
+- ✅ Rate limiting: forex 120/мин, analysis 60/мин, backtest 10/мин (IP бүрт, 429 + Retry-After)
+- ✅ Security headers: nosniff, DENY frame, Referrer-Policy, Permissions-Policy
+- ✅ CORS whitelist; prod-д `*` боломжгүй
+- ✅ Лог-д нууц устгагдана (scrubbing formatter)
+- ✅ Дотоод алдааны stack trace client руу гарахгүй (нэгдсэн ErrorResponse)
+- ✅ AI хариу Pydantic-аар validate; signal өөрчлөх оролдлого илэрвэл тайлбар устгагдана
+- ✅ Telegram token зөвхөн server-side; илгээлтийн алдаа мониторингийг зогсоохгүй
+- ✅ SSE heartbeat + disconnect cleanup (memory leak үгүй); reconnect үед ID-гаар duplicate хамгаалалт
+
+## Хязгаарлалт
+
+- Alert store in-memory (DB migration бэлэн, Step 9-д холбогдоно)
+- Telegram/хэрэглэгчийн multi-tenant auth одоогоор үгүй (нэг server instance)
+- Twelve Data free plan: 8 credit/мин — cache + poll давтамжаар хэмнэгдэнэ

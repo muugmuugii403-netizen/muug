@@ -11,7 +11,7 @@
  * зөвхөн backend-ийн хариуг харуулна.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CandleChart } from "@/components/CandleChart";
+import dynamic from "next/dynamic";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { PairTimeframeSelector } from "@/components/PairTimeframeSelector";
 import { MarketSummaryCard } from "@/components/MarketSummaryCard";
@@ -41,6 +41,16 @@ import {
   type ServerAlertSettings,
 } from "@/lib/alerts";
 import { showBrowserNotification } from "@/lib/notifications";
+
+// Chart-ийн хүнд bundle (lightweight-charts)-ийг зөвхөн шаардлагатай үед ачаална
+const CandleChart = dynamic(() => import("@/components/CandleChart").then((m) => m.CandleChart), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center font-mono text-[12px] text-dim">
+      График ачаалж байна…
+    </div>
+  ),
+});
 
 type Loaded<T> = { status: "ok"; payload: T };
 type Loading = { status: "loading" };

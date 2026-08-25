@@ -76,6 +76,13 @@ class ProviderTimeoutError(MarketDataError):
     code = "MARKET_DATA_TIMEOUT"
 
 
+class RateLimitedError(MarketDataError):
+    """Дотоод rate limiter хэт олон хүсэлтийг түр хаасан (429 + Retry-After)."""
+
+    status = 429
+    code = "RATE_LIMITED"
+
+
 # ============================================================
 # Analysis (signal engine) алдаанууд — Step 3
 # ============================================================
