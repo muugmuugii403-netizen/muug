@@ -37,7 +37,7 @@ export const TICKER: TickerPair[] = [
   { s: "USD/CHF", p: "0.8823", d: -0.19 },
   { s: "NZD/USD", p: "0.5988", d: 0.12 },
   { s: "DXY", p: "104.21", d: -0.21 },
-  { s: "XAU/USD", p: "2384.50", d: 0.67 },
+  { s: "XAU/USD", p: "2685.40", d: 0.67 },
 ];
 
 /* ---------------- 02 · folder tree ---------------- */

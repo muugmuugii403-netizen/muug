@@ -16,7 +16,11 @@ export interface ForexPairInfo {
   pipDecimals: number;
 }
 
-/** Дэмжигдэх 7 pair — backend registry-ийн mirror. */
+/**
+ * Дэмжигдэх 8 instrument — backend registry-ийн mirror
+ * (backend/app/services/market_data/symbols.py — цорын ганц эх сурвалж;
+ * шинэ instrument нэмэхэд ТУС БҮРД нь шинэчилнэ).
+ */
 export const FOREX_PAIRS: ForexPairInfo[] = [
   { symbol: "EUR/USD", name: "Euro / US Dollar", pipDecimals: 5 },
   { symbol: "GBP/USD", name: "British Pound / US Dollar", pipDecimals: 5 },
@@ -25,6 +29,7 @@ export const FOREX_PAIRS: ForexPairInfo[] = [
   { symbol: "USD/CAD", name: "US Dollar / Canadian Dollar", pipDecimals: 5 },
   { symbol: "USD/CHF", name: "US Dollar / Swiss Franc", pipDecimals: 5 },
   { symbol: "NZD/USD", name: "New Zealand Dollar / US Dollar", pipDecimals: 5 },
+  { symbol: "XAU/USD", name: "Gold / US Dollar", pipDecimals: 2 },
 ];
 
 export interface Candle {
@@ -70,8 +75,16 @@ export function getCandles(symbol: string, interval: Interval, outputsize = 200)
   );
 }
 
-/** Spread-ийг pip-ээр илэрхийлнэ (JPY pair: 1 pip = 0.01, бусад: 0.0001). */
+/**
+ * Нэг pip-ийн үнэ — backend `pip_size()`-тай ижил дүрэм:
+ * Gold → 0.10 · JPY pair → 0.01 · бусад → 0.0001.
+ */
+export function pipSize(symbol: string): number {
+  if (symbol === "XAU/USD") return 0.1;
+  return symbol.endsWith("/JPY") ? 0.01 : 0.0001;
+}
+
+/** Spread-ийг pip-ээр илэрхийлнэ. */
 export function spreadInPips(symbol: string, spread: number): number {
-  const pip = symbol.endsWith("/JPY") ? 0.01 : 0.0001;
-  return spread / pip;
+  return spread / pipSize(symbol);
 }

@@ -302,6 +302,7 @@ class SampleDataProvider:
         "USD/CAD": 1.3600,
         "USD/CHF": 0.8820,
         "NZD/USD": 0.5950,
+        "XAU/USD": 2685.00,  # Gold Spot — ойролцоо сүүлийн үнэ
     }
 
     def __init__(self) -> None:

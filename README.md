@@ -9,6 +9,23 @@ alert систем (browser + Telegram), backtesting, Qwen AI тайлбар.
 > нөлөөлөхгүй — зөвхөн бэлэн үр дүнг монгол хэлээр тайлбарлана.
 > Систем баталгаатай ашиг амлахгүй.
 
+## Дэмжигдэх instrument (8)
+
+| Symbol | Нэр | Pip | Нарийвчлал |
+|---|---|---|---|
+| EUR/USD | Euro / US Dollar | 0.0001 | 5 |
+| GBP/USD | British Pound / US Dollar | 0.0001 | 5 |
+| USD/JPY | US Dollar / Japanese Yen | 0.01 | 3 |
+| AUD/USD | Australian Dollar / US Dollar | 0.0001 | 5 |
+| USD/CAD | US Dollar / Canadian Dollar | 0.0001 | 5 |
+| USD/CHF | US Dollar / Swiss Franc | 0.0001 | 5 |
+| NZD/USD | New Zealand Dollar / US Dollar | 0.0001 | 5 |
+| **XAU/USD** | **Gold / US Dollar** | **0.10** | **2** |
+
+Шинэ instrument нэмэхэд **цорын ганц** `backend/app/services/market_data/symbols.py`
+registry-д нэмнэ (frontend mirror нь `frontend/src/lib/market.ts`). Twelve Data-ийн
+Gold symbol нь бодитоор `XAU/USD` (Commodity aggregate) болохыг албан docs-оор баталгаажуулсан.
+
 ## Архитектур
 
 ```
@@ -67,7 +84,7 @@ npm run dev
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Үгүй | Alert илгээлт; алдаа нь системийг зогсоохгүй |
 | `CORS_ORIGINS` | Тийм | Prod-д зөвхөн бодит domain (`*` блоклогдоно) |
 | `SECRET_KEY` | Тийм (prod) | Prod-д default утгыг config блоклож validate хийнэ |
-| `MONITOR_PAIRS` | Үгүй | Хоосон = бүх 7 pair; `"EUR/USD,GBP/USD"` гэж хязгаарлаж болно |
+| `MONITOR_PAIRS` | Үгүй | Хоосон = бүх 8 instrument (Gold ороод); `"EUR/USD,XAU/USD"` гэж хязгаарлаж болно |
 | `RATE_LIMIT_*` | Үгүй | Групп тус бүрийн минутын хязгаар (IP бүрт) |
 
 **Нууцууд зөвхөн backend-ийн `.env`-д** хадгалагдана. Frontend-ээс зөвхөн
