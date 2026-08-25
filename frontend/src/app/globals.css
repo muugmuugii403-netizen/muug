@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b171c;
+  --color-panel: #12262e;
+  --color-panel2: #17303a;
+  --color-line: #1e3e4a;
+  --color-edge: #2a5566;
+  --color-mist: #e8f2f4;
+  --color-fog: #8faab4;
+  --color-dim: #5e7b87;
+  --color-buy: #2fd08c;
+  --color-sell: #fb6f84;
+  --color-wait: #f5b84b;
+  --color-cy: #45d6e4;
+
+  --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-ink);
+  color: var(--color-mist);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(47, 208, 140, 0.28);
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1e3e4a;
+  border-radius: 8px;
+}
+
+@keyframes pulseled {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 208, 140, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(47, 208, 140, 0);
+  }
+}
+.led {
+  animation: pulseled 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
