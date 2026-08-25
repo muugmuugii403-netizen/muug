@@ -17,12 +17,9 @@ from app.schemas.backtest import BacktestRequest, BacktestResponse
 from app.schemas.market import Interval
 from app.services.backtest.engine import WARMUP, BacktestConfig, run_backtest
 from app.services.market_data.service import MarketDataService
-from app.services.market_data.symbols import get_pair
+from app.services.market_data.symbols import get_pair, pip_size
 
 logger = logging.getLogger("forex_analyzer.backtest")
-
-_PIP_SIZE_DEFAULT = 0.0001
-_PIP_SIZE_JPY = 0.01
 
 
 @dataclass
@@ -64,8 +61,8 @@ class BacktestService:
                 "Дата мужаа өргөсгөнө үү."
             )
 
-        # --- Spread / slippage-ийг үнэ болгох ---
-        pip = _PIP_SIZE_JPY if req.symbol.endswith("/JPY") else _PIP_SIZE_DEFAULT
+        # --- Spread / slippage-ийг үнэ болгох (pip хэмжээ registry-ээс) ---
+        pip = pip_size(req.symbol)
         spread = (req.spread_pips if req.spread_pips is not None else pair.typical_spread / pip) * pip
         slippage = req.slippage_pips * pip
 

@@ -36,6 +36,55 @@ async def health() -> HealthResponse:
     )
 
 
+@router.get("/health/detailed")
+async def health_detailed() -> JSONResponse:
+    """Readiness шалгалт — бүрэлдэхүүн тус бүрийн АЮУЛГҮЙ төлөв.
+
+    Зөвхөн boolean/төлөв мэдээлэл буцаана: ямар ч API key, token, DSN,
+    дотоод зам энд гарахгүй. Гадны сервисийн нэр (mode) л илэрнэ.
+    """
+    from app.api import forex as forex_api  # циклик import-оос зайлсхийж дотор нь
+
+    settings = get_settings()
+    market = forex_api.get_market_service()
+    monitor = getattr(forex_api, "_monitor", None)
+    task = forex_api.app_state.monitor_task
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "version": settings.api_version,
+            "env": settings.app_env.value,
+            "utc_now": datetime.now(timezone.utc).isoformat(),
+            "components": {
+                "api": {"status": "ok"},
+                "market_data": {
+                    # twelvedata | sample | none — provider-ийн горим л илэрнэ
+                    "mode": market.provider.source,
+                    "cache_candles_s": settings.market_data_cache_candles_s,
+                },
+                "monitor": {
+                    "enabled": settings.monitor_enabled,
+                    "running": task is not None and not task.done(),
+                    "subscribers": monitor.broadcaster.subscriber_count if monitor else 0,
+                    "pairs": monitor.pairs() if monitor else [],
+                },
+                "ai_explanation": {"enabled": bool(settings.qwen_api_key.get_secret_value())},
+                "telegram": {
+                    "configured": bool(
+                        settings.telegram_bot_token.get_secret_value() and settings.telegram_chat_id
+                    )
+                },
+                "rate_limiter": {"enabled": settings.rate_limit_enabled},
+                "database": {
+                    "connected": False,
+                    "note": "in-memory stores; database/migrations/001_init.sql бэлэн (Step 9)",
+                },
+            },
+        }
+    )
+
+
 @router.get("/pairs", response_model=list[PairInfo])
 async def list_pairs() -> list[PairInfo]:
     """Дэмжигдэх Forex pair-уудын жагсаалт."""

@@ -29,11 +29,15 @@ class Broadcaster:
         self._subscribers: set[asyncio.Queue[StreamEvent]] = set()
         self._lock = asyncio.Lock()
 
-    async def subscribe(self) -> AsyncIterator[StreamEvent]:
+    async def subscribe(self, heartbeat_s: float = 15.0) -> AsyncIterator[StreamEvent | None]:
         """Шинэ захиалагч нэмж, түүний event урсгалыг yield-лана.
 
-        Холболт тасрахад (client disconnect) generator дуусч, queue нь
-        автоматаар хасагдана.
+        • `heartbeat_s` хугацаанд event гарахгүй бол `None` yield-лана —
+          stream давхарга үүнийг `: keepalive` SSE comment болгон илгээж,
+          proxy/firewall холболтыг таслахгүй, мөн үхсэн TCP холболтыг
+          илрүүлэх боломж олгоно.
+        • Холболт тасрахад (client disconnect) generator дуусч, queue нь
+          автоматаар хасагдана (memory leak үгүй).
         """
         queue: asyncio.Queue[StreamEvent] = asyncio.Queue(maxsize=_QUEUE_MAX)
         async with self._lock:
@@ -41,7 +45,10 @@ class Broadcaster:
         logger.info("SSE клиент холбогдлоо (нийт %d)", len(self._subscribers))
         try:
             while True:
-                yield await queue.get()
+                try:
+                    yield await asyncio.wait_for(queue.get(), timeout=heartbeat_s)
+                except asyncio.TimeoutError:
+                    yield None
         finally:
             async with self._lock:
                 self._subscribers.discard(queue)

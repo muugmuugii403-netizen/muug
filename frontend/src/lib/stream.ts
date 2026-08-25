@@ -80,10 +80,12 @@ export class ForexEventStream {
     const es = new EventSource(STREAM_EVENTS_URL);
     this.es = es;
 
-    es.onopen = () => this.handlers.onState?.(true);
+    es.onopen = () => {
+      if (!this.closed) this.handlers.onState?.(true);
+    };
     es.onerror = () => {
       // EventSource өөрөө reconnect хийнэ; бид зөвхөн төлөвийг мэдэгдэнэ
-      this.handlers.onState?.(false);
+      if (!this.closed) this.handlers.onState?.(false);
     };
 
     const parse = <T,>(e: MessageEvent): T | null => {
@@ -115,6 +117,11 @@ export class ForexEventStream {
       if (!a) return;
       if (this.seenAlertIds.has(a.id)) return; // duplicate (reconnect) хамгаалалт
       this.seenAlertIds.add(a.id);
+      // Set хязгааргүй өсөхөөс хамгаална (сүүлийн 500 id хангалттай)
+      if (this.seenAlertIds.size > 500) {
+        const oldest = this.seenAlertIds.values().next().value;
+        if (oldest !== undefined) this.seenAlertIds.delete(oldest);
+      }
       this.handlers.onAlert?.(a);
     });
     es.addEventListener("status", (e) => {

@@ -22,6 +22,7 @@ from app.api.routes import router
 from app.api.stream import router as stream_router
 from app.core.config import get_settings
 from app.core.errors import AnalysisError, MarketDataError
+from app.core.logging_utils import configure_logging
 from app.schemas.analysis import ErrorResponse
 
 logger = logging.getLogger("forex_analyzer")
@@ -31,10 +32,8 @@ logger = logging.getLogger("forex_analyzer")
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Startup: logging + realtime monitor loop; shutdown: monitor-ийг зогсооно."""
     settings = get_settings()
-    logging.basicConfig(
-        level=logging.DEBUG if settings.debug else logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s :: %(message)s",
-    )
+    # Structured logging + secret scrubbing (API key/token хэзээ ч лог-д гарахгүй)
+    configure_logging(settings.debug)
     logger.info(
         "%s эхэлж байна (env=%s, version=%s)",
         settings.app_name,
@@ -80,6 +79,17 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+
+    # ---------- Security headers (Step 8) ----------
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        return response
 
     app.include_router(router, prefix=f"/api/{settings.api_version}")
     app.include_router(forex_router, prefix="/api")  # /api/forex/quote · /api/forex/candles

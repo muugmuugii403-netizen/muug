@@ -28,6 +28,9 @@ FOREX_PAIRS: tuple[ForexPair, ...] = (
     ForexPair("USD/CAD", "US Dollar / Canadian Dollar", 5, 0.00010),
     ForexPair("USD/CHF", "US Dollar / Swiss Franc", 5, 0.00011),
     ForexPair("NZD/USD", "New Zealand Dollar / US Dollar", 5, 0.00012),
+    # Gold Spot — Twelve Data symbol нь мөн "XAU/USD" (Commodity aggregate).
+    # 2 оронтой нарийвчлал (2685.45), 1 pip = 0.10, ердийн retail spread ~0.30.
+    ForexPair("XAU/USD", "Gold / US Dollar", 2, 0.30),
 )
 
 _REGISTRY: dict[str, ForexPair] = {p.symbol: p for p in FOREX_PAIRS}
@@ -43,3 +46,15 @@ def get_pair(symbol: str) -> ForexPair | None:
 
 def supported_symbols() -> list[str]:
     return [p.symbol for p in FOREX_PAIRS]
+
+
+# Pip хэмжээ — instrument-ээс хамаарна (цорын ганц эх сурвалж):
+#   JPY pair → 0.01 · Gold → 0.10 · бусад → 0.0001
+_PIP_OVERRIDES: dict[str, float] = {"XAU/USD": 0.1}
+
+
+def pip_size(symbol: str) -> float:
+    """Нэг pip-ийн үнэ. Тодорхойгүй symbol-д 0.0001 (standard pip)."""
+    if symbol in _PIP_OVERRIDES:
+        return _PIP_OVERRIDES[symbol]
+    return 0.01 if symbol.endswith("/JPY") else 0.0001

@@ -12,7 +12,6 @@ auto-reconnect, нэмэлт хамааралгүй — энэ архитект�
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import AsyncIterator
@@ -20,6 +19,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
+from app.core.rate_limit import Group, rate_limit
 from app.schemas.alerts import AlertRecord, AlertSettings, StreamEvent
 from app.schemas.signal import SignalResponse
 from app.services.monitor.broadcaster import Broadcaster
@@ -68,14 +68,13 @@ async def stream_events(monitor: MonitorService = Depends(get_monitor)) -> Strea
         # Холболтын эхний мөчид одоогийн төлөвийг бүхэлд нь илгээнэ —
         # reconnect үед ч гэсэн duplicate alert үүсэхгүй (ID-гаар ялгагдана).
         yield f"event: snapshot\ndata: {json.dumps(monitor.snapshot(), default=str)}\n\n"
-        last_keepalive = asyncio.get_running_loop().time()
-        async for event in broadcaster.subscribe():
+        async for event in broadcaster.subscribe(heartbeat_s=_KEEPALIVE_S):
+            if event is None:
+                # Heartbeat: SSE comment — клиент хүлээж авах боловч event биш.
+                # Удаан чимээгүй үед proxy/firewall холболтыг таслахаас хамгаална.
+                yield ": keepalive\n\n"
+                continue
             yield _sse(event)
-            last_keepalive = asyncio.get_running_loop().time()
-        # subscribe() хэзээ ч өөрөө дуусдаггүй; keepalive нь зөвхөн client
-        # хүлээж байх үед холболт амьд байлгах зориулалттай тул энэ мөр
-        # практикт хүрэхгүй — гэхдээ generator-ын contract-д заавал байна.
-        del last_keepalive
 
     return StreamingResponse(
         event_gen(),
@@ -94,7 +93,7 @@ async def get_alert_settings(monitor: MonitorService = Depends(get_monitor)) -> 
     return monitor.store.get_settings()
 
 
-@router.post("/alerts/settings", response_model=AlertSettings)
+@router.post("/alerts/settings", response_model=AlertSettings, dependencies=[Depends(rate_limit(Group.ALERTS))])
 async def update_alert_settings(
     patch: AlertSettings, monitor: MonitorService = Depends(get_monitor)
 ) -> AlertSettings:
