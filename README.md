@@ -29,7 +29,7 @@ Gold symbol нь бодитоор `XAU/USD` (Commodity aggregate) болохыг
 ## Архитектур
 
 ```
-Forex API (Twelve Data)
+Forex API (Twelve Data → keyгүй бол YFinance LIVE fallback)
    ↓  timeout · retry · rate-limit handling · TTL cache
 FastAPI (backend)
    ↓  5M/15M candle-close илрүүлэлт (look-ahead bias үгүй)
@@ -79,7 +79,7 @@ npm run dev
 
 | Хувьсагч | Заавал? | Тайлбар |
 |---|---|---|
-| `TWELVE_DATA_API_KEY` | Үгүй | Хоосон бол детерминист **sample** өгөгдөл (dev) |
+| `TWELVE_DATA_API_KEY` | Үгүй | Хоосон бол **YFinance LIVE** fallback (`source="yfinance"`); `SampleDataProvider` зөвхөн тестэд |
 | `QWEN_API_KEY` | Үгүй | Хоосон бол AI тайлбар унтраалттай, signal хэвийн |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Үгүй | Alert илгээлт; алдаа нь системийг зогсоохгүй |
 | `CORS_ORIGINS` | Тийм | Prod-д зөвхөн бодит domain (`*` блоклогдоно) |

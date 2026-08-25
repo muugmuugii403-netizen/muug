@@ -14,7 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-DataSource = Literal["twelvedata", "sample"]
+# twelvedata = бодит (key-тэй) · yfinance = LIVE fallback (keyгүй) · sample = зөвхөн тест
+DataSource = Literal["twelvedata", "yfinance", "sample"]
 
 
 class Interval(str, Enum):

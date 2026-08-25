@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import asyncio
+import types
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 import httpx
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -32,7 +34,13 @@ from app.core.errors import (
 )
 from app.main import app
 from app.schemas.market import Candle, Interval
-from app.services.market_data.providers import RawBar, RawQuote, TwelveDataProvider
+from app.services.market_data import providers as providers_module
+from app.services.market_data.providers import (
+    RawBar,
+    RawQuote,
+    TwelveDataProvider,
+    YFinanceProvider,
+)
 from app.services.market_data.service import MarketDataService
 
 API = "/api/forex"
@@ -256,26 +264,174 @@ class TestForexApi:
             app.dependency_overrides.clear()
 
 
-class TestSampleMode:
-    def test_sample_provider_when_no_key(self) -> None:
-        """Key хоосон + fallback асаалттай → source='sample', 200 лаан, зөв OHLC."""
-        settings = Settings(twelve_data_api_key="", sample_fallback_enabled=True)  # type: ignore[call-arg]
-        service = build_market_service(settings)
-        assert service.provider.source == "sample"
+# ---------- YFinance fallback (networkгүй, детерминист) ----------
 
-        res = TestClient(app, raise_server_exceptions=False)
-        # service-ийг шууд дуудаж шалгана (DI override хэрэггүй)
-        candles = _run(service.get_candles("EUR/USD", Interval.M5, 200))
-        assert candles.source == "sample"
-        assert candles.count == 200
-        assert all(c.high >= max(c.open, c.close) for c in candles.candles)
-        assert [c.timestamp for c in candles.candles] == sorted(c.timestamp for c in candles.candles)
 
-        quote = _run(service.get_quote("USD/JPY"))
-        assert quote.source == "sample"
-        assert quote.bid < quote.price < quote.ask
-        assert quote.spread > 0
+class _FakeTicker:
+    """yf.Ticker-ийн орлуулагч — сүлжээнд гарахгүй."""
 
+    def __init__(
+        self,
+        df: pd.DataFrame | None = None,
+        last_price: float | None = None,
+        fail_fast_info: bool = False,
+    ) -> None:
+        self._df = df if df is not None else pd.DataFrame()
+        self._last_price = last_price
+        self._fail_fast_info = fail_fast_info
+        self.history_calls: list[dict[str, Any]] = []
+
+    @property
+    def fast_info(self) -> Any:
+        if self._fail_fast_info or self._last_price is None:
+            raise RuntimeError("fast_info боломжгүй")
+        return types.SimpleNamespace(last_price=self._last_price)
+
+    def history(self, **kwargs: Any) -> pd.DataFrame:
+        self.history_calls.append(kwargs)
+        return self._df
+
+
+class _FakeYf:
+    """yf модулийн орлуулагч — ашиглагдсан symbol-ийг тэмдэглэнэ."""
+
+    def __init__(self, ticker: _FakeTicker) -> None:
+        self._ticker = ticker
+        self.last_symbol: str | None = None
+
+    def Ticker(self, symbol: str) -> _FakeTicker:  # noqa: N802 — yfinance API нэр
+        self.last_symbol = symbol
+        return self._ticker
+
+
+def _ohlc_df(periods: int = 6, tz: str | None = "America/New_York") -> pd.DataFrame:
+    """5 минутын зайтай, тогтмол OHLC утгатай DataFrame."""
+    idx = pd.date_range("2026-02-10 09:30", periods=periods, freq="5min", tz=tz)
+    base = [2680.0 + i for i in range(periods)]
+    return pd.DataFrame(
+        {
+            "Open": base,
+            "High": [b + 1.5 for b in base],
+            "Low": [b - 1.5 for b in base],
+            "Close": [b + 0.5 for b in base],
+        },
+        index=idx,
+    )
+
+
+class TestProviderSelection:
+    def test_yfinance_selected_when_no_key(self) -> None:
+        """Key хоосон → YFinance LIVE provider сонгогдоно (сүлжээнд гарахгүй)."""
+        service = build_market_service(Settings(twelve_data_api_key=""))
+        assert isinstance(service.provider, YFinanceProvider)
+        assert service.provider.source == "yfinance"
+
+    def test_twelvedata_preferred_when_key_present(self) -> None:
+        service = build_market_service(Settings(twelve_data_api_key="test-key"))
+        assert isinstance(service.provider, TwelveDataProvider)
+        assert service.provider.source == "twelvedata"
+
+
+class TestYFinanceProvider:
+    """YFinanceProvider unit тестүүд — yf.Ticker бүрэн орлуулсан, детерминист."""
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch, ticker: _FakeTicker) -> _FakeYf:
+        fake_yf = _FakeYf(ticker)
+        monkeypatch.setattr(providers_module, "yf", fake_yf)
+        return fake_yf
+
+    def test_fetch_time_series_converts_to_utc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_yf = self._patch(monkeypatch, _FakeTicker(df=_ohlc_df()))
+        provider = YFinanceProvider()
+
+        bars = _run(provider.fetch_time_series("XAU/USD", Interval.M5, 200))
+
+        assert fake_yf.last_symbol == "GC=F"  # symbol mapping ажилласан
+        assert len(bars) == 6
+        assert all(b.timestamp.tzinfo is not None for b in bars)
+        assert all(b.timestamp.utcoffset() == timedelta(0) for b in bars)
+        # NY 09:30 (EST, UTC-5) → UTC 14:30
+        assert bars[0].timestamp == datetime(2026, 2, 10, 14, 30, tzinfo=timezone.utc)
+        assert bars[0].open == 2680.0
+        assert bars[0].high == 2681.5
+        assert bars[0].low == 2678.5
+        assert bars[0].close == 2680.5
+        assert [b.timestamp for b in bars] == sorted(b.timestamp for b in bars)
+
+    def test_fetch_time_series_outputsize_tail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch(monkeypatch, _FakeTicker(df=_ohlc_df(periods=6)))
+        provider = YFinanceProvider()
+        bars = _run(provider.fetch_time_series("EUR/USD", Interval.M15, 3))
+        assert len(bars) == 3  # сүүлийн 3 лаа
+        assert bars[0].open == 2683.0
+
+    def test_fetch_time_series_naive_index_localized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch(monkeypatch, _FakeTicker(df=_ohlc_df(periods=2, tz=None)))
+        provider = YFinanceProvider()
+        bars = _run(provider.fetch_time_series("GBP/USD", Interval.M5, 10))
+        assert bars[0].timestamp == datetime(2026, 2, 10, 9, 30, tzinfo=timezone.utc)
+
+    def test_fetch_time_series_empty_raises_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch(monkeypatch, _FakeTicker(df=pd.DataFrame()))
+        provider = YFinanceProvider()
+        with pytest.raises(ProviderUnavailableError):
+            _run(provider.fetch_time_series("EUR/USD", Interval.M5, 200))
+
+    def test_fetch_time_series_network_error_wrapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _ExplodingTicker(_FakeTicker):
+            def history(self, **kwargs: Any) -> pd.DataFrame:
+                raise ConnectionError("network down")
+
+        self._patch(monkeypatch, _ExplodingTicker())
+        provider = YFinanceProvider()
+        with pytest.raises(ProviderUnavailableError):
+            _run(provider.fetch_time_series("EUR/USD", Interval.M5, 200))
+
+    def test_fetch_time_series_range_filters_inclusive_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _FakeTicker(df=_ohlc_df(periods=6))
+        self._patch(monkeypatch, fake)
+        provider = YFinanceProvider()
+
+        start = datetime(2026, 2, 10, 14, 30, tzinfo=timezone.utc)
+        end = datetime(2026, 2, 10, 14, 40, tzinfo=timezone.utc)
+        bars = _run(provider.fetch_time_series_range("XAU/USD", Interval.M5, start, end))
+
+        # 14:30, 14:35, 14:40 — inclusive; 14:45+ хасагдсан
+        assert [b.timestamp for b in bars] == [
+            datetime(2026, 2, 10, 14, 30, tzinfo=timezone.utc),
+            datetime(2026, 2, 10, 14, 35, tzinfo=timezone.utc),
+            datetime(2026, 2, 10, 14, 40, tzinfo=timezone.utc),
+        ]
+        assert fake.history_calls[0]["interval"] == "5m"
+        assert fake.history_calls[0]["start"] == start
+
+    def test_fetch_quote_uses_fast_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch(monkeypatch, _FakeTicker(last_price=2685.42))
+        provider = YFinanceProvider()
+        quote = _run(provider.fetch_quote("XAU/USD"))
+        assert quote.price == 2685.42
+        assert quote.timestamp.tzinfo is not None
+
+    def test_fetch_quote_falls_back_to_1m_history(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        df = pd.DataFrame(
+            {"Close": [2684.0, 2685.1]},
+            index=pd.date_range("2026-02-10 15:58", periods=2, freq="1min", tz="UTC"),
+        )
+        fake = _FakeTicker(df=df, fail_fast_info=True)
+        self._patch(monkeypatch, fake)
+        provider = YFinanceProvider()
+        quote = _run(provider.fetch_quote("XAU/USD"))
+        assert quote.price == 2685.1
+        assert fake.history_calls[0]["interval"] == "1m"
+
+    def test_fetch_quote_all_paths_fail_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch(monkeypatch, _FakeTicker(df=pd.DataFrame(), fail_fast_info=True))
+        provider = YFinanceProvider()
+        with pytest.raises(ProviderUnavailableError):
+            _run(provider.fetch_quote("XAU/USD"))
+
+
+class TestCandleValidation:
     def test_candle_model_rejects_bad_ohlc(self) -> None:
         with pytest.raises(ValidationError):
             Candle(

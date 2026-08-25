@@ -8,7 +8,7 @@
 import { apiFetch, FOREX_BASE_URL } from "./api";
 
 export type Interval = "5min" | "15min";
-export type DataSource = "twelvedata" | "sample";
+export type DataSource = "twelvedata" | "yfinance" | "sample";
 
 export interface ForexPairInfo {
   symbol: string;
