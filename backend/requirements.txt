@@ -7,6 +7,9 @@ pydantic-settings>=2.7.1
 # ---- HTTP client (Step 2: market data) ----
 httpx>=0.28.1
 
+# ---- Market data fallback: Twelve Data keyгүй үед LIVE өгөгдөл ----
+yfinance>=0.2.46
+
 # ---- Storage (Step 2) ----
 SQLAlchemy[asyncio]>=2.0.37
 asyncpg>=0.30.0

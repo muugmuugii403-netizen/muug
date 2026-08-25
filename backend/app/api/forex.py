@@ -18,7 +18,6 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from app.core.config import Settings, get_settings
-from app.core.errors import MarketDataNotConfiguredError
 from app.schemas.ai import AnalysisResponse
 from app.schemas.market import CandlesResponse, Interval, QuoteResponse
 from app.schemas.signal import SignalResponse
@@ -32,10 +31,8 @@ from app.services.monitor.broadcaster import Broadcaster
 from app.services.monitor.service import MonitorService
 from app.services.market_data.providers import (
     MarketDataProvider,
-    RawBar,
-    RawQuote,
-    SampleDataProvider,
     TwelveDataProvider,
+    YFinanceProvider,
 )
 from app.services.market_data.service import DEFAULT_OUTPUTSIZE, MAX_OUTPUTSIZE, MarketDataService
 
@@ -44,28 +41,10 @@ logger = logging.getLogger("forex_analyzer.market")
 router = APIRouter(prefix="/forex", tags=["forex"])
 
 
-class _UnconfiguredProvider:
-    """API key байхгүй + sample fallback унтраалттай үед ашиглагдана."""
-
-    source: str = "none"
-
-    async def fetch_time_series(self, symbol: str, interval: Interval, outputsize: int) -> list[RawBar]:
-        raise MarketDataNotConfiguredError(
-            "Market data тохируулагдаагүй: backend/.env-д TWELVE_DATA_API_KEY оруулна уу "
-            "(эсвэл SAMPLE_FALLBACK_ENABLED=true)"
-        )
-
-    async def fetch_quote(self, symbol: str) -> RawQuote:
-        raise MarketDataNotConfiguredError("Market data тохируулагдаагүй: TWELVE_DATA_API_KEY шаардлагатай")
-
-    async def aclose(self) -> None:  # pragma: no cover
-        return None
-
-
 def build_market_service(settings: Settings) -> MarketDataService:
     """Тохиргооноос хамаарч provider-ийг сонгоно.
 
-    Дараалал: бодит Twelve Data key → sample fallback → алдаа.
+    Дараалал: бодит Twelve Data key → YFinance LIVE fallback (key шаардахгүй).
     """
     api_key = settings.twelve_data_api_key.get_secret_value()
     provider: MarketDataProvider
@@ -77,14 +56,9 @@ def build_market_service(settings: Settings) -> MarketDataService:
             retries=settings.market_data_retries,
         )
         logger.info("Market data provider: TwelveData (бодит өгөгдөл)")
-    elif settings.sample_fallback_enabled:
-        provider = SampleDataProvider()
-        logger.warning(
-            "TWELVE_DATA_API_KEY хоосон байна — SAMPLE өгөгдөл горимд ажиллаж байна. "
-            "Бодит өгөгдөлд .env-д key оруулна уу."
-        )
     else:
-        provider = _UnconfiguredProvider()
+        provider = YFinanceProvider()
+        logger.info("Market data provider: YFinance (live data)")
     return MarketDataService(
         provider=provider,
         candles_ttl_s=settings.market_data_cache_candles_s,

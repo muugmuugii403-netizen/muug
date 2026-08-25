@@ -1,12 +1,15 @@
 """Provider давхарга — гадаад market data эх сурвалжууд.
 
-Одоогоор хоёр provider байна:
+Гурван provider байна:
   • TwelveDataProvider — бодит өгөгдөл (https://api.twelvedata.com/docs дахь
     /time_series ба /quote endpoint-үүд). Timeout, retry (5xx/сүлжээнд),
     rate-limit (429 + Retry-After) болон provider-ийн алдааны код боловсруулалттай.
-  • SampleDataProvider — API keyгүй үед локал dev-д зориулсан,
-    ДЕТЕРМИНИСТ (seed-тэй) жишээ өгөгдөл. Хариунд source="sample" гэж
-    тод тэмдэглэгдэнэ; production-д хэзээ ч бодит өгөгдөл шиг хэрэглэгдэхгүй.
+  • YFinanceProvider — Twelve Data keyгүй үед автоматаар сонгогдох LIVE
+    fallback (Yahoo Finance). source="yfinance". Синхрон yfinance санг
+    event loop блоклохгүйгээр asyncio.to_thread-ээр дуудна.
+  • SampleDataProvider — ДЕТЕРМИНИСТ (seed-тэй) жишээ өгөгдөл; зөвхөн
+    тестэд хэрэглэгдэнэ. Хариунд source="sample" гэж тод тэмдэглэгдэнэ;
+    production-д хэзээ ч бодит өгөгдөл шиг хэрэглэгдэхгүй.
 
 API key зөвхөн TwelveDataProvider._get_json-д параметр болж нэмэгдэнэ,
 лог-д хэзээ ч хэвлэгдэхгүй.
@@ -23,6 +26,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
+import pandas as pd
+import yfinance as yf
 
 from app.core.errors import (
     ProviderAuthError,
@@ -375,6 +380,147 @@ class SampleDataProvider:
     async def fetch_quote(self, symbol: str) -> RawQuote:
         bars = self._series(symbol, Interval.M5, 50)
         return RawQuote(price=bars[-1].close, timestamp=datetime.now(timezone.utc))
+
+
+class YFinanceProvider:
+    """Yahoo Finance (yfinance) — Twelve Data keyгүй үеийн LIVE fallback.
+
+    `.env`-д `TWELVE_DATA_API_KEY` хоосон байхад автоматаар сонгогдож,
+    бодит зах зээлийн өгөгдөл авахад хэрэглэгдэнэ (source="yfinance").
+
+    Анхаарах зүйлс:
+      • XAU/USD нь GC=F (Gold Futures) symbol-аар ирнэ — spot-той ойролцоо
+        боловч фьючерсийн ханш тул бага зэрэг зөрүүтэй байж болно.
+      • yfinance нь синхрон сан тул event loop-ыг блоклохгүйн тулд бүх
+        дуудлага `asyncio.to_thread`-ээр thread pool-д ажиллана.
+      • 5m/15m intraday өгөгдөл сүүлийн ~60 өдрөөр хязгаарлагдана
+        (backtest-ийн 31 өдрийн хязгаартай нийцнэ).
+      • Timestamp бүр UTC болгон normalize хийгдэнэ.
+    """
+
+    source: str = "yfinance"
+
+    SYMBOL_MAP: dict[str, str] = {
+        "XAU/USD": "GC=F",  # Gold Futures — spot-ийн proxy
+        "EUR/USD": "EURUSD=X",
+        "GBP/USD": "GBPUSD=X",
+        "USD/JPY": "JPY=X",
+        "AUD/USD": "AUDUSD=X",
+        "USD/CAD": "CAD=X",
+        "USD/CHF": "CHF=X",
+        "NZD/USD": "NZDUSD=X",
+    }
+
+    # Манай Interval enum ("5min"/"15min") → yfinance формат ("5m"/"15m")
+    _YF_INTERVALS: dict[Interval, str] = {Interval.M5: "5m", Interval.M15: "15m"}
+
+    async def aclose(self) -> None:  # pragma: no cover — чөлөөлөх нөөцгүй
+        return None
+
+    # ---------- туслагч ----------
+
+    def _require_mapped(self, symbol: str) -> str:
+        mapped = self.SYMBOL_MAP.get(symbol)
+        if mapped is None:
+            raise SymbolNotFoundUpstreamError(f"YFinance mapping тодорхойгүй: {symbol}")
+        return mapped
+
+    def _history_sync(self, yf_symbol: str, max_ts: datetime | None = None, **kwargs: Any) -> list[RawBar]:
+        """Синхрон worker — thread pool-д ажиллана. `kwargs` нь yf history()-д очно."""
+        df = yf.Ticker(yf_symbol).history(**kwargs)
+        if df is None or df.empty:
+            raise ProviderUnavailableError(f"YFinance '{yf_symbol}' өгөгдөл буцаасангүй")
+        df = df.dropna(subset=["Open", "High", "Low", "Close"])
+        if df.empty:
+            raise ProviderUnavailableError(f"YFinance '{yf_symbol}' мөрүүд бүгд NaN байна")
+        index = _to_utc_index(df.index)
+        bars = [
+            RawBar(
+                timestamp=ts.to_pydatetime(),
+                open=float(row["Open"]),
+                high=float(row["High"]),
+                low=float(row["Low"]),
+                close=float(row["Close"]),
+            )
+            for ts, row in zip(index, df.to_dict("records"))
+        ]
+        bars.sort(key=lambda b: b.timestamp)
+        if max_ts is not None:
+            # yfinance-ийн end параметр EXCLUSIVE тул inclusive-ээр хайчилна
+            bars = [b for b in bars if b.timestamp <= max_ts]
+        return bars
+
+    def _last_price_sync(self, yf_symbol: str) -> float:
+        """fast_info.last_price; амжилтгүй бол сүүлийн 1m лааны close."""
+        ticker = yf.Ticker(yf_symbol)
+        price: float | None = None
+        try:
+            price = float(ticker.fast_info.last_price)
+        except Exception:  # noqa: BLE001 — fast_info олон янзаар амжилтгүй болдог
+            price = None
+        if price is not None and math.isfinite(price) and price > 0:
+            return price
+        df = ticker.history(period="1d", interval="1m")
+        if df is None or df.empty or "Close" not in df.columns:
+            raise ProviderUnavailableError(f"YFinance '{yf_symbol}' сүүлийн үнэ олж чадсангүй")
+        closes = df["Close"].dropna()
+        if closes.empty:
+            raise ProviderUnavailableError(f"YFinance '{yf_symbol}' close утга хоосон байна")
+        return float(closes.iloc[-1])
+
+    # ---------- MarketDataProvider интерфейс ----------
+
+    async def fetch_time_series(self, symbol: str, interval: Interval, outputsize: int) -> list[RawBar]:
+        yf_symbol = self._require_mapped(symbol)
+        yf_interval = self._YF_INTERVALS[interval]
+        logger.info("yfinance time_series: %s (%s) %s ×%d", symbol, yf_symbol, yf_interval, outputsize)
+        try:
+            bars = await asyncio.to_thread(
+                self._history_sync, yf_symbol, None, period="5d", interval=yf_interval
+            )
+        except ProviderUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — yfinance-ийн дотоод алдааг дээш задлахгүй
+            raise ProviderUnavailableError(f"YFinance-аас өгөгдөл авч чадсангүй: {exc}") from exc
+        return bars[-outputsize:] if outputsize > 0 else bars
+
+    async def fetch_time_series_range(
+        self, symbol: str, interval: Interval, start: datetime, end: datetime
+    ) -> list[RawBar]:
+        yf_symbol = self._require_mapped(symbol)
+        yf_interval = self._YF_INTERVALS[interval]
+        logger.info("yfinance range: %s (%s) [%s → %s]", symbol, yf_symbol, start, end)
+        try:
+            return await asyncio.to_thread(
+                self._history_sync,
+                yf_symbol,
+                end,  # inclusive хайчилт (yfinance end-ээс өмнөх өдрийг оруулж ирдэг)
+                start=start,
+                end=end + timedelta(days=1),
+                interval=yf_interval,
+            )
+        except ProviderUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProviderUnavailableError(f"YFinance-аас өгөгдөл авч чадсангүй: {exc}") from exc
+
+    async def fetch_quote(self, symbol: str) -> RawQuote:
+        yf_symbol = self._require_mapped(symbol)
+        logger.info("yfinance quote: %s (%s)", symbol, yf_symbol)
+        try:
+            price = await asyncio.to_thread(self._last_price_sync, yf_symbol)
+        except ProviderUnavailableError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ProviderUnavailableError(f"YFinance-аас үнэ авч чадсангүй: {exc}") from exc
+        return RawQuote(price=price, timestamp=datetime.now(timezone.utc))
+
+
+def _to_utc_index(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """yfinance-ийн DatetimeIndex-ийг UTC болгож normalize хийнэ."""
+    if index.tz is None:
+        return index.tz_localize("UTC")
+    return index.tz_convert("UTC")
 
 
 def _retry_after_from(resp: httpx.Response) -> int:
